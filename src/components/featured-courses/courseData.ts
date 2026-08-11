@@ -1,60 +1,135 @@
-import courseGdsPostman from "../../assets/images/course-gds-postman.svg";
-import coursePa from "../../assets/images/course-pa.svg";
-import courseIp from "../../assets/images/course-ip.svg";
-import coursePssb from "../../assets/images/course-pssb.svg";
+export type Course = {
+  id: string;
+  title: string;
+  shortTitle: string;
+  subtitle: string;
+  description: string;
 
-export const featuredCourse = {
-  title: "GDS to MTS / Postman",
-  badge: "FEATURED COURSE",
+  // Current selling price
+  fee: number;
 
-  description:
-    "Complete preparation for GDS officials appearing for MTS and Postman promotion examinations.",
+  // Optional reference/MRP price
+  originalFee: number;
 
-  image: courseGdsPostman,
+  access: "premium";
 
-  price: "₹499",
-  oldPrice: "₹999",
+  icon: string;
 
-  features: [
-    "Complete Syllabus",
-    "Previous Year Questions",
-    "Mock Tests",
-    "Study Materials",
-    "Detailed Solutions",
-  ],
+  theme: {
+    background: string;
+    iconBackground: string;
+    iconColor: string;
+  };
 };
 
-export const otherCourses = [
+export const courses: Course[] = [
   {
+    id: "gds-mts",
+    title: "GDS → MTS",
+    shortTitle: "GDS to MTS",
+    subtitle: "GDS TO MTS PROMOTION",
+    description:
+      "Structured preparation for GDS Aspirants targeting the MTS promotion examination.",
+
+    fee: 299,
+    originalFee: 599,
+
+    access: "premium",
+
+    icon: "📚",
+
+    theme: {
+      background: "from-blue-50 to-white",
+      iconBackground: "bg-blue-100",
+      iconColor: "text-blue-700",
+    },
+  },
+
+  {
+    id: "gds-postman",
+    title: "GDS → Postman / Mail Guard",
+    shortTitle: "GDS to Postman",
+    subtitle: "PROMOTION EXAMINATION",
+    description:
+      "Focused preparation for GDS Aspirants preparing for Postman and Mail Guard promotion.",
+
+    fee: 499,
+    originalFee: 999,
+
+    access: "premium",
+
+    icon: "📮",
+
+    theme: {
+      background: "from-red-50 to-white",
+      iconBackground: "bg-red-100",
+      iconColor: "text-red-700",
+    },
+  },
+
+  {
+    id: "postal-assistant",
     title: "Postal Assistant / Sorting Assistant",
-
+    shortTitle: "PA / SA",
+    subtitle: "PA / SA PREPARATION",
     description:
-      "Complete preparation for Postal Assistant and Sorting Assistant examinations.",
+      "Comprehensive preparation resources for Postal Assistant and Sorting Assistant examinations.",
 
-    image: coursePa,
+    fee: 599,
+    originalFee: 1199,
 
-    color: "blue",
+    access: "premium",
+
+    icon: "🎓",
+
+    theme: {
+      background: "from-blue-50 to-white",
+      iconBackground: "bg-blue-100",
+      iconColor: "text-blue-700",
+    },
   },
 
   {
+    id: "inspector-posts",
     title: "Inspector Posts",
-
+    shortTitle: "Inspector Posts",
+    subtitle: "LDCE PREPARATION",
     description:
-      "Preparation materials and mock tests for Inspector Posts LDCE.",
+      "Dedicated preparation resources for Inspector Posts LDCE Aspirants.",
 
-    image: courseIp,
+    fee: 799,
+    originalFee: 1499,
 
-    color: "red",
+    access: "premium",
+
+    icon: "⭐",
+
+    theme: {
+      background: "from-amber-50 to-white",
+      iconBackground: "bg-amber-100",
+      iconColor: "text-amber-700",
+    },
   },
 
   {
-    title: "PSS Group 'B'",
-
+    id: "pss-group-b",
+    title: "PSS Group B",
+    shortTitle: "PSS Group B",
+    subtitle: "PROMOTION EXAMINATION",
     description:
-      "Complete study materials for PSS Group 'B' examination.",
+      "Specialized preparation resources for PSS Group B Aspirants.",
 
-    image: coursePssb,
+    fee: 999,
+    originalFee: 1999,
 
-    color: "purple",
+    access: "premium",
+
+    icon: "🏆",
+
+    theme: {
+      background: "from-purple-50 to-white",
+      iconBackground: "bg-purple-100",
+      iconColor: "text-purple-700",
+    },
   },
 ];
