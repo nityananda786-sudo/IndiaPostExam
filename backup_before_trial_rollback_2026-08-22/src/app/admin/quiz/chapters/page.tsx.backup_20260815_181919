@@ -1,0 +1,1544 @@
+﻿"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { auth } from "@/lib/firebase";
+
+type Book = {
+  BookID: string;
+  BookName: string;
+  CourseAccess?: string;
+  Active?: boolean;
+};
+
+type Course = {
+  CourseID: string;
+  CourseName: string;
+  Active?: boolean;
+};
+
+type Chapter = {
+  ChapterID: string;
+  BookID: string;
+  ChapterName: string;
+  CourseAccess?: string;
+  Active?: boolean;
+  _rowNumber?: number;
+};
+
+const EMPTY_FORM = {
+  bookId: "",
+  chapterName: "",
+  courseAccess: [] as string[],
+  active: true,
+};
+
+function parseCourseAccess(value?: string) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeCourseIds(values: string[]) {
+  return Array.from(
+    new Set(
+      values
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+async function getAuthHeaders() {
+  const user = auth.currentUser;
+
+  if (!user) {
+    throw new Error(
+      "You are not logged in. Please sign in again."
+    );
+  }
+
+  const token = await user.getIdToken();
+
+  return {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+}
+
+export default function ChaptersAdminPage() {
+  const [books, setBooks] = useState<Book[]>([]);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [chapters, setChapters] = useState<Chapter[]>([]);
+
+  const [selectedBookId, setSelectedBookId] =
+    useState("");
+
+  const [loadingBooks, setLoadingBooks] =
+    useState(true);
+
+  const [loadingCourses, setLoadingCourses] =
+    useState(true);
+
+  const [loadingChapters, setLoadingChapters] =
+    useState(false);
+
+  const [showForm, setShowForm] =
+    useState(false);
+
+  const [editingChapter, setEditingChapter] =
+    useState<Chapter | null>(null);
+
+  const [form, setForm] = useState(
+    EMPTY_FORM
+  );
+
+  const [saving, setSaving] =
+    useState(false);
+
+  const [deletingId, setDeletingId] =
+    useState("");
+
+  const [message, setMessage] =
+    useState("");
+
+  const [error, setError] =
+    useState("");
+
+  // =====================================================
+  // LOAD BOOKS
+  // =====================================================
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadBooks() {
+      try {
+        setLoadingBooks(true);
+        setError("");
+
+        const headers =
+          await getAuthHeaders();
+
+        const response = await fetch(
+          "/api/admin/books",
+          {
+            method: "GET",
+            headers,
+            cache: "no-store",
+          }
+        );
+
+        const data =
+          await response.json();
+
+        if (!response.ok || !data.success) {
+          throw new Error(
+            data?.error ||
+              "Unable to load books."
+          );
+        }
+
+        const loadedBooks: Book[] =
+          Array.isArray(data.books)
+            ? data.books
+            : [];
+
+        if (cancelled) return;
+
+        setBooks(loadedBooks);
+
+        if (!selectedBookId) {
+          const firstActiveBook =
+            loadedBooks.find(
+              (book) =>
+                book.Active !== false
+            );
+
+          if (firstActiveBook) {
+            setSelectedBookId(
+              firstActiveBook.BookID
+            );
+          }
+        }
+      } catch (err) {
+        if (cancelled) return;
+
+        console.error(
+          "Error loading books:",
+          err
+        );
+
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Unable to load books."
+        );
+      } finally {
+        if (!cancelled) {
+          setLoadingBooks(false);
+        }
+      }
+    }
+
+    loadBooks();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedBookId]);
+
+  // =====================================================
+  // LOAD COURSES
+  // =====================================================
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCourses() {
+      try {
+        setLoadingCourses(true);
+
+        const headers =
+          await getAuthHeaders();
+
+        const response =
+          await fetch(
+            "/api/admin/courses",
+            {
+              method: "GET",
+              headers,
+              cache: "no-store",
+            }
+          );
+
+        const data =
+          await response.json();
+
+        if (!response.ok || !data.success) {
+          throw new Error(
+            data?.error ||
+              "Unable to load courses."
+          );
+        }
+
+        const loadedCourses: Course[] =
+          Array.isArray(data.courses)
+            ? data.courses
+            : [];
+
+        if (!cancelled) {
+          setCourses(
+            loadedCourses.filter(
+              (course) =>
+                course.Active !== false
+            )
+          );
+        }
+      } catch (err) {
+        if (cancelled) return;
+
+        console.error(
+          "Error loading courses:",
+          err
+        );
+
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Unable to load courses."
+        );
+      } finally {
+        if (!cancelled) {
+          setLoadingCourses(false);
+        }
+      }
+    }
+
+    loadCourses();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // =====================================================
+  // SELECTED BOOK
+  // =====================================================
+
+  const selectedBook = useMemo(
+    () =>
+      books.find(
+        (book) =>
+          book.BookID ===
+          selectedBookId
+      ),
+    [books, selectedBookId]
+  );
+
+  // =====================================================
+  // COURSES AVAILABLE FOR SELECTED BOOK
+  // =====================================================
+
+  const bookCourseIds = useMemo(() => {
+    return normalizeCourseIds(
+      parseCourseAccess(
+        selectedBook?.CourseAccess
+      )
+    );
+  }, [selectedBook]);
+
+  const availableCourses = useMemo(() => {
+    const allowed =
+      new Set(
+        bookCourseIds.map((id) =>
+          id.toUpperCase()
+        )
+      );
+
+    return courses.filter((course) =>
+      allowed.has(
+        course.CourseID.toUpperCase()
+      )
+    );
+  }, [courses, bookCourseIds]);
+
+  // =====================================================
+  // LOAD CHAPTERS
+  // =====================================================
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadChapters() {
+      if (!selectedBookId) {
+        setChapters([]);
+        return;
+      }
+
+      try {
+        setLoadingChapters(true);
+        setError("");
+        setMessage("");
+
+        const headers =
+          await getAuthHeaders();
+
+        const response =
+          await fetch(
+            `/api/admin/chapters?bookId=${encodeURIComponent(
+              selectedBookId
+            )}`,
+            {
+              method: "GET",
+              headers,
+              cache: "no-store",
+            }
+          );
+
+        const data =
+          await response.json();
+
+        if (!response.ok || !data.success) {
+          throw new Error(
+            data?.error ||
+              "Unable to load chapters."
+          );
+        }
+
+        if (cancelled) return;
+
+        const loadedChapters: Chapter[] =
+          Array.isArray(data.chapters)
+            ? data.chapters.map(
+                (
+                  chapter: Chapter
+                ) => ({
+                  ...chapter,
+                  CourseAccess:
+                    normalizeCourseIds(
+                      parseCourseAccess(
+                        chapter.CourseAccess
+                      )
+                    ).join(","),
+                })
+              )
+            : [];
+
+        setChapters(
+          loadedChapters
+        );
+      } catch (err) {
+        if (cancelled) return;
+
+        console.error(
+          "Error loading chapters:",
+          err
+        );
+
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Unable to load chapters."
+        );
+
+        setChapters([]);
+      } finally {
+        if (!cancelled) {
+          setLoadingChapters(false);
+        }
+      }
+    }
+
+    loadChapters();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedBookId]);
+
+  // =====================================================
+  // ADD
+  // =====================================================
+
+  function openAddForm() {
+    setEditingChapter(null);
+
+    setForm({
+      bookId: selectedBookId,
+      chapterName: "",
+      courseAccess: [],
+      active: true,
+    });
+
+    setMessage("");
+    setError("");
+    setShowForm(true);
+  }
+
+  // =====================================================
+  // EDIT
+  // =====================================================
+
+  function openEditForm(
+    chapter: Chapter
+  ) {
+    setEditingChapter(chapter);
+
+    setForm({
+      bookId:
+        chapter.BookID || "",
+      chapterName:
+        chapter.ChapterName || "",
+      courseAccess:
+        normalizeCourseIds(
+          parseCourseAccess(
+            chapter.CourseAccess
+          )
+        ),
+      active:
+        chapter.Active !== false,
+    });
+
+    setMessage("");
+    setError("");
+    setShowForm(true);
+  }
+
+  // =====================================================
+  // CLOSE FORM
+  // =====================================================
+
+  function closeForm() {
+    if (saving) return;
+
+    setShowForm(false);
+    setEditingChapter(null);
+    setForm({
+      ...EMPTY_FORM,
+      courseAccess: [],
+    });
+  }
+
+  // =====================================================
+  // TOGGLE COURSE
+  // =====================================================
+
+  function toggleCourse(
+    courseId: string
+  ) {
+    setForm((current) => {
+      const exists =
+        current.courseAccess.some(
+          (id) =>
+            id.toUpperCase() ===
+            courseId.toUpperCase()
+        );
+
+      return {
+        ...current,
+        courseAccess: exists
+          ? current.courseAccess.filter(
+              (id) =>
+                id.toUpperCase() !==
+                courseId.toUpperCase()
+            )
+          : [
+              ...current.courseAccess,
+              courseId,
+            ],
+      };
+    });
+  }
+
+  // =====================================================
+  // SELECT ALL BOOK COURSES
+  // =====================================================
+
+  function selectAllBookCourses() {
+    setForm((current) => ({
+      ...current,
+      courseAccess:
+        availableCourses.map(
+          (course) =>
+            course.CourseID
+        ),
+    }));
+  }
+
+  // =====================================================
+  // CLEAR COURSES
+  // =====================================================
+
+  function clearCourses() {
+    setForm((current) => ({
+      ...current,
+      courseAccess: [],
+    }));
+  }
+
+  // =====================================================
+  // SAVE
+  // =====================================================
+
+  async function saveChapter() {
+    setMessage("");
+    setError("");
+
+    if (!form.bookId) {
+      setError(
+        "Please select a book."
+      );
+      return;
+    }
+
+    if (!form.chapterName.trim()) {
+      setError(
+        "Please enter the chapter name."
+      );
+      return;
+    }
+
+    if (
+      form.courseAccess.length === 0
+    ) {
+      setError(
+        "Please select at least one applicable course."
+      );
+      return;
+    }
+
+    const allowedIds =
+      new Set(
+        availableCourses.map(
+          (course) =>
+            course.CourseID.toUpperCase()
+        )
+      );
+
+    const invalidCourses =
+      form.courseAccess.filter(
+        (courseId) =>
+          !allowedIds.has(
+            courseId.toUpperCase()
+          )
+      );
+
+    if (invalidCourses.length > 0) {
+      setError(
+        "One or more selected courses are not available for this Book."
+      );
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      const headers =
+        await getAuthHeaders();
+
+      const payload = {
+        bookId:
+          form.bookId,
+        chapterName:
+          form.chapterName.trim(),
+        courseAccess:
+          normalizeCourseIds(
+            form.courseAccess
+          ),
+        active:
+          form.active,
+      };
+
+      const response =
+        await fetch(
+          "/api/admin/chapters",
+          {
+            method:
+              editingChapter
+                ? "PUT"
+                : "POST",
+            headers,
+            body: JSON.stringify(
+              editingChapter
+                ? {
+                    ...payload,
+                    chapterId:
+                      editingChapter.ChapterID,
+                  }
+                : payload
+            ),
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data?.error ||
+            "Unable to save chapter."
+        );
+      }
+
+      setMessage(
+        editingChapter
+          ? "Chapter updated successfully."
+          : "Chapter added successfully."
+      );
+
+      setShowForm(false);
+      setEditingChapter(null);
+
+      setForm({
+        ...EMPTY_FORM,
+        courseAccess: [],
+      });
+
+      await reloadChapters();
+    } catch (err) {
+      console.error(
+        "Error saving chapter:",
+        err
+      );
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to save chapter."
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // =====================================================
+  // RELOAD CHAPTERS
+  // =====================================================
+
+  async function reloadChapters() {
+    if (!selectedBookId) return;
+
+    const headers =
+      await getAuthHeaders();
+
+    const response =
+      await fetch(
+        `/api/admin/chapters?bookId=${encodeURIComponent(
+          selectedBookId
+        )}`,
+        {
+          method: "GET",
+          headers,
+          cache: "no-store",
+        }
+      );
+
+    const data =
+      await response.json();
+
+    if (
+      response.ok &&
+      data.success
+    ) {
+      setChapters(
+        Array.isArray(
+          data.chapters
+        )
+          ? data.chapters.map(
+              (
+                chapter: Chapter
+              ) => ({
+                ...chapter,
+                CourseAccess:
+                  normalizeCourseIds(
+                    parseCourseAccess(
+                      chapter.CourseAccess
+                    )
+                  ).join(","),
+              })
+            )
+          : []
+      );
+    }
+  }
+
+  // =====================================================
+  // ACTIVE / INACTIVE
+  // =====================================================
+
+  async function toggleActive(
+    chapter: Chapter
+  ) {
+    try {
+      setError("");
+      setMessage("");
+
+      const headers =
+        await getAuthHeaders();
+
+      const courseAccess =
+        normalizeCourseIds(
+          parseCourseAccess(
+            chapter.CourseAccess
+          )
+        );
+
+      const response =
+        await fetch(
+          "/api/admin/chapters",
+          {
+            method: "PUT",
+            headers,
+            body: JSON.stringify({
+              chapterId:
+                chapter.ChapterID,
+              bookId:
+                chapter.BookID,
+              chapterName:
+                chapter.ChapterName,
+              courseAccess,
+              active:
+                chapter.Active === false,
+            }),
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data?.error ||
+            "Unable to change chapter status."
+        );
+      }
+
+      setMessage(
+        chapter.Active === false
+          ? "Chapter activated successfully."
+          : "Chapter deactivated successfully."
+      );
+
+      setChapters(
+        (current) =>
+          current.map((item) =>
+            item.ChapterID ===
+            chapter.ChapterID
+              ? {
+                  ...item,
+                  Active:
+                    chapter.Active === false,
+                }
+              : item
+          )
+      );
+    } catch (err) {
+      console.error(
+        "Error changing chapter status:",
+        err
+      );
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to change chapter status."
+      );
+    }
+  }
+
+  // =====================================================
+  // DELETE
+  // =====================================================
+
+  async function deleteChapter(
+    chapter: Chapter
+  ) {
+    const confirmed =
+      window.confirm(
+        `Delete "${chapter.ChapterName}"?\n\nThis should only be done if no questions are attached to this chapter.`
+      );
+
+    if (!confirmed) return;
+
+    try {
+      setDeletingId(
+        chapter.ChapterID
+      );
+      setError("");
+      setMessage("");
+
+      const headers =
+        await getAuthHeaders();
+
+      const response =
+        await fetch(
+          "/api/admin/chapters",
+          {
+            method: "DELETE",
+            headers,
+            body: JSON.stringify({
+              chapterId:
+                chapter.ChapterID,
+            }),
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data?.error ||
+            "Unable to delete chapter."
+        );
+      }
+
+      setChapters(
+        (current) =>
+          current.filter(
+            (item) =>
+              item.ChapterID !==
+              chapter.ChapterID
+          )
+      );
+
+      setMessage(
+        "Chapter deleted successfully."
+      );
+    } catch (err) {
+      console.error(
+        "Error deleting chapter:",
+        err
+      );
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to delete chapter."
+      );
+    } finally {
+      setDeletingId("");
+    }
+  }
+
+  return (
+    <main className="min-h-screen bg-slate-50">
+
+      {/* HEADER */}
+
+      <section className="bg-[#123f82] text-white">
+
+        <div className="mx-auto max-w-7xl px-6 py-10">
+
+          <Link
+            href="/admin/quiz"
+            className="mb-5 inline-flex items-center text-sm font-semibold text-white/80 transition hover:text-white"
+          >
+            ← Back to Quiz Management
+          </Link>
+
+          <p className="text-sm font-bold tracking-[0.25em] text-red-300">
+            INDIAPOSTEXAM
+          </p>
+
+          <h1 className="mt-2 text-4xl font-extrabold">
+            Chapters
+          </h1>
+
+          <p className="mt-3 max-w-2xl text-white/80">
+            Organize chapters by book and
+            independently control their course
+            applicability.
+          </p>
+
+        </div>
+
+      </section>
+
+      {/* MAIN */}
+
+      <section className="mx-auto max-w-7xl px-6 py-10">
+
+        {message && (
+          <div className="mb-6 rounded-xl border border-green-200 bg-green-50 px-5 py-3 text-sm font-semibold text-green-700">
+            {message}
+          </div>
+        )}
+
+        {error && (
+          <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-5 py-3 text-sm font-semibold text-red-700">
+            {error}
+          </div>
+        )}
+
+        {/* BOOK SELECTOR */}
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+
+          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+
+            <div className="flex-1">
+
+              <label className="mb-2 block text-sm font-bold text-slate-700">
+                Select Book
+              </label>
+
+              {loadingBooks ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                  Loading books...
+                </div>
+              ) : (
+                <select
+                  value={selectedBookId}
+                  onChange={(e) =>
+                    setSelectedBookId(
+                      e.target.value
+                    )
+                  }
+                  className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                >
+                  <option value="">
+                    Select a book
+                  </option>
+
+                  {books
+                    .filter(
+                      (book) =>
+                        book.Active !== false
+                    )
+                    .map((book) => (
+                      <option
+                        key={book.BookID}
+                        value={book.BookID}
+                      >
+                        {book.BookName}
+                      </option>
+                    ))}
+                </select>
+              )}
+
+            </div>
+
+            <button
+              type="button"
+              onClick={openAddForm}
+              disabled={
+                !selectedBookId ||
+                loadingBooks ||
+                loadingCourses ||
+                availableCourses.length === 0
+              }
+              className="rounded-xl bg-[#123f82] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#0d326a] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              + Add Chapter
+            </button>
+
+          </div>
+
+          {selectedBook && (
+            <div className="mt-5 rounded-xl bg-blue-50 px-4 py-3">
+
+              <p className="text-xs font-bold uppercase tracking-wide text-blue-500">
+                Current Book
+              </p>
+
+              <p className="mt-1 font-extrabold text-[#123f82]">
+                {selectedBook.BookName}
+              </p>
+
+              <p className="mt-1 text-xs font-semibold text-blue-600">
+                Book Course Access:{" "}
+                {bookCourseIds.length > 0
+                  ? bookCourseIds.join(", ")
+                  : "Not configured"}
+              </p>
+
+            </div>
+          )}
+
+        </div>
+
+        {/* CHAPTER LIST */}
+
+        <div className="mt-8">
+
+          {loadingChapters ? (
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center text-sm font-semibold text-slate-500">
+              Loading chapters...
+            </div>
+
+          ) : !selectedBookId ? (
+
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center">
+
+              <div className="text-5xl">
+                📖
+              </div>
+
+              <h2 className="mt-4 text-xl font-extrabold text-[#123f82]">
+                Select a book
+              </h2>
+
+              <p className="mt-2 text-sm text-slate-500">
+                Select a departmental book above
+                to manage its chapters.
+              </p>
+
+            </div>
+
+          ) : chapters.length === 0 ? (
+
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center">
+
+              <div className="text-5xl">
+                📖
+              </div>
+
+              <h2 className="mt-4 text-xl font-extrabold text-[#123f82]">
+                No chapters yet
+              </h2>
+
+              <p className="mt-2 text-sm text-slate-500">
+                Start organizing this book by
+                adding its first chapter.
+              </p>
+
+              <button
+                type="button"
+                onClick={openAddForm}
+                className="mt-6 rounded-xl bg-[#123f82] px-5 py-3 text-sm font-bold text-white"
+              >
+                + Add First Chapter
+              </button>
+
+            </div>
+
+          ) : (
+
+            <div className="space-y-4">
+
+              {chapters.map(
+                (chapter, index) => {
+
+                  const chapterCourses =
+                    normalizeCourseIds(
+                      parseCourseAccess(
+                        chapter.CourseAccess
+                      )
+                    );
+
+                  const courseNames =
+                    chapterCourses
+                      .map(
+                        (courseId) =>
+                          courses.find(
+                            (course) =>
+                              course.CourseID.toUpperCase() ===
+                              courseId.toUpperCase()
+                          )?.CourseName ||
+                          courseId
+                      );
+
+                  return (
+                    <div
+                      key={
+                        chapter.ChapterID
+                      }
+                      className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:shadow-md"
+                    >
+
+                      <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+
+                        <div className="flex gap-4">
+
+                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-blue-50 font-extrabold text-[#123f82]">
+                            {index + 1}
+                          </div>
+
+                          <div>
+
+                            <div className="flex flex-wrap items-center gap-3">
+
+                              <h3 className="text-lg font-extrabold text-[#123f82]">
+                                {
+                                  chapter.ChapterName
+                                }
+                              </h3>
+
+                              <span
+                                className={`rounded-full px-3 py-1 text-xs font-bold ${
+                                  chapter.Active !==
+                                  false
+                                    ? "bg-emerald-50 text-emerald-700"
+                                    : "bg-slate-100 text-slate-500"
+                                }`}
+                              >
+                                {chapter.Active !==
+                                false
+                                  ? "Active"
+                                  : "Inactive"}
+                              </span>
+
+                            </div>
+
+                            <p className="mt-1 text-xs font-semibold text-slate-400">
+                              {
+                                chapter.ChapterID
+                              }
+                            </p>
+
+                            <div className="mt-2 flex flex-wrap gap-2">
+
+                              {courseNames.map(
+                                (
+                                  courseName
+                                ) => (
+                                  <span
+                                    key={
+                                      courseName
+                                    }
+                                    className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700"
+                                  >
+                                    {
+                                      courseName
+                                    }
+                                  </span>
+                                )
+                              )}
+
+                            </div>
+
+                          </div>
+
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              openEditForm(
+                                chapter
+                              )
+                            }
+                            className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-bold text-[#123f82] hover:bg-slate-50"
+                          >
+                            Edit
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              toggleActive(
+                                chapter
+                              )
+                            }
+                            className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50"
+                          >
+                            {chapter.Active !==
+                            false
+                              ? "Deactivate"
+                              : "Activate"}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              deleteChapter(
+                                chapter
+                              )
+                            }
+                            disabled={
+                              deletingId ===
+                              chapter.ChapterID
+                            }
+                            className="rounded-lg border border-red-200 px-4 py-2 text-sm font-bold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {deletingId ===
+                            chapter.ChapterID
+                              ? "Deleting..."
+                              : "Delete"}
+                          </button>
+
+                        </div>
+
+                      </div>
+
+                    </div>
+                  );
+                }
+              )}
+
+            </div>
+
+          )}
+
+        </div>
+
+      </section>
+
+      {/* ADD / EDIT MODAL */}
+
+      {showForm && (
+
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+
+          <div className="w-full max-w-xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+
+            <div className="border-b border-slate-200 px-6 py-5">
+
+              <div className="flex items-center justify-between">
+
+                <div>
+
+                  <h2 className="text-xl font-extrabold text-[#123f82]">
+                    {editingChapter
+                      ? "Edit Chapter"
+                      : "Add Chapter"}
+                  </h2>
+
+                  <p className="mt-1 text-xs text-slate-500">
+                    Course applicability can be different
+                    for every chapter.
+                  </p>
+
+                </div>
+
+                <button
+                  type="button"
+                  onClick={closeForm}
+                  disabled={saving}
+                  className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 disabled:opacity-50"
+                >
+                  ×
+                </button>
+
+              </div>
+
+            </div>
+
+            <div className="space-y-5 px-6 py-6">
+
+              {/* BOOK */}
+
+              <div>
+
+                <label className="mb-2 block text-sm font-bold text-slate-700">
+                  Book
+                </label>
+
+                <select
+                  value={form.bookId}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      bookId:
+                        e.target.value,
+                      courseAccess: [],
+                    })
+                  }
+                  disabled={
+                    !!editingChapter
+                  }
+                  className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
+                >
+
+                  <option value="">
+                    Select Book
+                  </option>
+
+                  {books
+                    .filter(
+                      (book) =>
+                        book.Active !== false
+                    )
+                    .map((book) => (
+                      <option
+                        key={book.BookID}
+                        value={book.BookID}
+                      >
+                        {book.BookName}
+                      </option>
+                    ))}
+
+                </select>
+
+              </div>
+
+              {/* CHAPTER NAME */}
+
+              <div>
+
+                <label className="mb-2 block text-sm font-bold text-slate-700">
+                  Chapter Name *
+                </label>
+
+                <input
+                  type="text"
+                  value={
+                    form.chapterName
+                  }
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      chapterName:
+                        e.target.value,
+                    })
+                  }
+                  placeholder="e.g. General Provisions"
+                  className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                />
+
+              </div>
+
+              {/* COURSE ACCESS */}
+
+              <div>
+
+                <div className="mb-2 flex items-center justify-between">
+
+                  <label className="block text-sm font-bold text-slate-700">
+                    Applicable Courses *
+                  </label>
+
+                  {availableCourses.length >
+                    0 && (
+                    <div className="flex gap-2">
+
+                      <button
+                        type="button"
+                        onClick={
+                          selectAllBookCourses
+                        }
+                        className="text-xs font-bold text-[#123f82] hover:underline"
+                      >
+                        Select All
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={
+                          clearCourses
+                        }
+                        className="text-xs font-bold text-slate-500 hover:underline"
+                      >
+                        Clear
+                      </button>
+
+                    </div>
+                  )}
+
+                </div>
+
+                {loadingCourses ? (
+
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-500">
+                    Loading courses...
+                  </div>
+
+                ) : availableCourses.length ===
+                  0 ? (
+
+                  <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-4 text-sm font-semibold text-red-700">
+                    This Book has no active CourseAccess.
+                    Configure the Book's CourseAccess first.
+                  </div>
+
+                ) : (
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+
+                    {availableCourses.map(
+                      (course) => {
+
+                        const checked =
+                          form.courseAccess.some(
+                            (id) =>
+                              id.toUpperCase() ===
+                              course.CourseID.toUpperCase()
+                          );
+
+                        return (
+                          <label
+                            key={
+                              course.CourseID
+                            }
+                            className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition ${
+                              checked
+                                ? "border-blue-300 bg-blue-50"
+                                : "border-slate-200 bg-white hover:bg-slate-50"
+                            }`}
+                          >
+
+                            <input
+                              type="checkbox"
+                              checked={
+                                checked
+                              }
+                              onChange={() =>
+                                toggleCourse(
+                                  course.CourseID
+                                )
+                              }
+                              className="mt-1 h-4 w-4 accent-blue-700"
+                            />
+
+                            <div>
+
+                              <div className="text-sm font-bold text-slate-700">
+                                {
+                                  course.CourseName
+                                }
+                              </div>
+
+                              <div className="mt-1 text-xs font-semibold text-slate-400">
+                                {
+                                  course.CourseID
+                                }
+                              </div>
+
+                            </div>
+
+                          </label>
+                        );
+                      }
+                    )}
+
+                  </div>
+
+                )}
+
+                <p className="mt-2 text-xs text-slate-500">
+                  Only courses assigned to the selected
+                  Book can be selected for this Chapter.
+                </p>
+
+              </div>
+
+              {/* ACTIVE */}
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+
+                <label className="flex cursor-pointer items-center gap-3">
+
+                  <input
+                    type="checkbox"
+                    checked={
+                      form.active
+                    }
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        active:
+                          e.target.checked,
+                      })
+                    }
+                    className="h-4 w-4 accent-emerald-600"
+                  />
+
+                  <div>
+
+                    <div className="text-sm font-bold text-slate-700">
+                      Chapter is Active
+                    </div>
+
+                    <div className="text-xs text-slate-500">
+                      Inactive chapters will not be
+                      available for new question content.
+                    </div>
+
+                  </div>
+
+                </label>
+
+              </div>
+
+            </div>
+
+            <div className="border-t border-slate-200 px-6 py-5">
+
+              <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+
+                <button
+                  type="button"
+                  onClick={closeForm}
+                  disabled={saving}
+                  className="rounded-xl border border-slate-200 px-6 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  onClick={saveChapter}
+                  disabled={
+                    saving ||
+                    loadingCourses ||
+                    availableCourses.length ===
+                      0
+                  }
+                  className="rounded-xl bg-[#123f82] px-6 py-3 text-sm font-bold text-white hover:bg-[#0d326a] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {saving
+                    ? "Saving..."
+                    : editingChapter
+                    ? "Update Chapter"
+                    : "Save Chapter"}
+                </button>
+
+              </div>
+
+            </div>
+
+          </div>
+
+        </div>
+
+      )}
+
+    </main>
+  );
+}

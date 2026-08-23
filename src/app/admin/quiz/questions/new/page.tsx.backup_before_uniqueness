@@ -1,0 +1,846 @@
+"use client";
+
+import { Suspense, useEffect, useState } from "react";
+import Link from "next/link";
+import { useSearchParams, useRouter } from "next/navigation";
+
+import {
+  addDoc,
+  collection,
+  doc,
+  getDoc,
+  serverTimestamp,
+} from "firebase/firestore";
+
+import { db } from "@/lib/firebase";
+
+type Book = {
+  id: string;
+  title: string;
+};
+
+type Chapter = {
+  id: string;
+  bookId: string;
+  title: string;
+  order?: number;
+};
+
+type Option = {
+  id: string;
+  text: string;
+};
+
+const createOptions = (): Option[] => [
+  { id: "option_1", text: "" },
+  { id: "option_2", text: "" },
+  { id: "option_3", text: "" },
+  { id: "option_4", text: "" },
+];
+
+function AddQuestionPageContent() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  const bookId = searchParams.get("bookId") || "";
+  const chapterId = searchParams.get("chapterId") || "";
+
+  const [book, setBook] = useState<Book | null>(null);
+  const [chapter, setChapter] =
+    useState<Chapter | null>(null);
+
+  const [questionText, setQuestionText] =
+    useState("");
+
+  const [options, setOptions] =
+    useState<Option[]>(createOptions);
+
+  const [correctOptionId, setCorrectOptionId] =
+    useState("");
+
+  const [explanation, setExplanation] =
+    useState("");
+
+  const [sourceReference, setSourceReference] =
+    useState("");
+
+  const [amendmentReference, setAmendmentReference] =
+    useState("");
+
+  const [status, setStatus] =
+    useState<"draft" | "published">("draft");
+
+  const [active, setActive] = useState(true);
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  // =====================================================
+  // LOAD BOOK AND CHAPTER
+  // =====================================================
+
+  useEffect(() => {
+    async function loadData() {
+      if (!bookId || !chapterId) {
+        setError(
+          "Book or Chapter information is missing."
+        );
+        setLoading(false);
+        return;
+      }
+
+      try {
+        setLoading(true);
+        setError("");
+
+        const bookRef = doc(db, "books", bookId);
+        const chapterRef = doc(
+          db,
+          "chapters",
+          chapterId
+        );
+
+        const [bookSnapshot, chapterSnapshot] =
+          await Promise.all([
+            getDoc(bookRef),
+            getDoc(chapterRef),
+          ]);
+
+        if (!bookSnapshot.exists()) {
+          setError("Book not found.");
+          setLoading(false);
+          return;
+        }
+
+        if (!chapterSnapshot.exists()) {
+          setError("Chapter not found.");
+          setLoading(false);
+          return;
+        }
+
+        setBook({
+          id: bookSnapshot.id,
+          ...(bookSnapshot.data() as Omit<
+            Book,
+            "id"
+          >),
+        });
+
+        setChapter({
+          id: chapterSnapshot.id,
+          ...(chapterSnapshot.data() as Omit<
+            Chapter,
+            "id"
+          >),
+        });
+      } catch (err: any) {
+        console.error(
+          "Error loading question context:",
+          err
+        );
+
+        setError(
+          err?.message ||
+            "Unable to load book and chapter."
+        );
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadData();
+  }, [bookId, chapterId]);
+
+  // =====================================================
+  // UPDATE OPTION
+  // =====================================================
+
+  function updateOption(
+    optionId: string,
+    value: string
+  ) {
+    setOptions((currentOptions) =>
+      currentOptions.map((option) =>
+        option.id === optionId
+          ? {
+              ...option,
+              text: value,
+            }
+          : option
+      )
+    );
+  }
+
+  // =====================================================
+  // VALIDATE
+  // =====================================================
+
+  function validateForm(): string | null {
+    if (!bookId || !chapterId) {
+      return "Book or Chapter information is missing.";
+    }
+
+    if (!questionText.trim()) {
+      return "Please enter the question.";
+    }
+
+    for (let i = 0; i < options.length; i++) {
+      if (!options[i].text.trim()) {
+        return `Please enter Option ${
+          String.fromCharCode(65 + i)
+        }.`;
+      }
+    }
+
+    if (!correctOptionId) {
+      return "Please select the correct answer.";
+    }
+
+    return null;
+  }
+
+  // =====================================================
+  // SAVE QUESTION
+  // =====================================================
+
+  async function saveQuestion() {
+    setMessage("");
+    setError("");
+
+    const validationError = validateForm();
+
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      /*
+       * IMPORTANT:
+       *
+       * We store stable option IDs instead of depending
+       * permanently on A/B/C/D.
+       *
+       * This allows the quiz engine to randomize the
+       * displayed option order on every attempt.
+       */
+
+      await addDoc(collection(db, "questions"), {
+        bookId,
+        chapterId,
+
+        questionText: questionText.trim(),
+
+        options: options.map((option) => ({
+          id: option.id,
+          text: option.text.trim(),
+        })),
+
+        correctOptionId,
+
+        explanation: explanation.trim(),
+
+        sourceReference:
+          sourceReference.trim(),
+
+        amendmentReference:
+          amendmentReference.trim(),
+
+        status,
+
+        active,
+
+        /*
+         * These fields are deliberately kept ready for
+         * the future Google Sheets / Excel import system.
+         */
+        importSource: "admin",
+        externalQuestionId: "",
+
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      setMessage(
+        "Question saved successfully."
+      );
+
+      /*
+       * Give the success message a moment to display,
+       * then return to the Question Bank.
+       */
+      setTimeout(() => {
+        router.push(
+          `/admin/quiz/questions?bookId=${encodeURIComponent(
+            bookId
+          )}&chapterId=${encodeURIComponent(
+            chapterId
+          )}`
+        );
+      }, 900);
+    } catch (err: any) {
+      console.error(
+        "Error saving question:",
+        err
+      );
+
+      setError(
+        err?.message ||
+          "Unable to save question."
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // =====================================================
+  // LOADING
+  // =====================================================
+
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-slate-50">
+
+        <div className="mx-auto max-w-4xl px-6 py-16">
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center text-sm font-semibold text-slate-500 shadow-sm">
+            Loading question form...
+          </div>
+
+        </div>
+
+      </main>
+    );
+  }
+
+  // =====================================================
+  // ERROR / MISSING CONTEXT
+  // =====================================================
+
+  if (!book || !chapter) {
+    return (
+      <main className="min-h-screen bg-slate-50">
+
+        <div className="mx-auto max-w-2xl px-6 py-16">
+
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-8 text-center">
+
+            <div className="text-4xl">
+              ⚠️
+            </div>
+
+            <h1 className="mt-4 text-xl font-extrabold text-red-700">
+              Unable to open Question Form
+            </h1>
+
+            <p className="mt-3 text-sm leading-6 text-red-600">
+              {error ||
+                "Book or Chapter information could not be loaded."}
+            </p>
+
+            <Link
+              href="/admin/quiz/questions"
+              className="mt-6 inline-flex rounded-xl bg-[#123f82] px-5 py-3 text-sm font-bold text-white"
+            >
+              Back to Question Bank
+            </Link>
+
+          </div>
+
+        </div>
+
+      </main>
+    );
+  }
+
+  // =====================================================
+  // MAIN PAGE
+  // =====================================================
+
+  return (
+    <main className="min-h-screen bg-slate-50">
+
+      {/* =================================================
+          HEADER
+      ================================================= */}
+
+      <section className="bg-[#123f82] text-white">
+
+        <div className="mx-auto max-w-4xl px-6 py-10">
+
+          <Link
+            href={`/admin/quiz/questions?bookId=${encodeURIComponent(
+              bookId
+            )}&chapterId=${encodeURIComponent(
+              chapterId
+            )}`}
+            className="mb-5 inline-flex items-center text-sm font-semibold text-white/80 hover:text-white"
+          >
+            ← Back to Question Bank
+          </Link>
+
+          <p className="text-sm font-bold tracking-[0.25em] text-red-300">
+            INDIAPOSTEXAM
+          </p>
+
+          <h1 className="mt-2 text-4xl font-extrabold">
+            Add Question
+          </h1>
+
+          <p className="mt-3 text-white/80">
+            Create a question in the Master Question Bank.
+          </p>
+
+        </div>
+
+      </section>
+
+
+      {/* =================================================
+          CONTENT
+      ================================================= */}
+
+      <section className="mx-auto max-w-4xl px-6 py-10">
+
+        {/* BOOK / CHAPTER */}
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+
+          <p className="text-xs font-bold uppercase tracking-[0.15em] text-blue-500">
+            Question Location
+          </p>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+
+            <div className="rounded-xl bg-blue-50 p-4">
+
+              <p className="text-xs font-bold text-blue-500">
+                Book
+              </p>
+
+              <p className="mt-1 font-extrabold text-[#123f82]">
+                {book.title}
+              </p>
+
+            </div>
+
+            <div className="rounded-xl bg-purple-50 p-4">
+
+              <p className="text-xs font-bold text-purple-500">
+                Chapter
+              </p>
+
+              <p className="mt-1 font-extrabold text-purple-800">
+                {chapter.title}
+              </p>
+
+            </div>
+
+          </div>
+
+        </div>
+
+
+        {/* ERROR */}
+
+        {error && (
+          <div className="mt-6 rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm font-semibold text-red-700">
+            {error}
+          </div>
+        )}
+
+
+        {/* SUCCESS */}
+
+        {message && (
+          <div className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm font-semibold text-emerald-700">
+            {message}
+          </div>
+        )}
+
+
+        {/* =================================================
+            QUESTION FORM
+        ================================================= */}
+
+        <div className="mt-8 space-y-6">
+
+          {/* QUESTION TEXT */}
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+
+            <label className="mb-2 block text-sm font-bold text-slate-700">
+              Question *
+            </label>
+
+            <textarea
+              value={questionText}
+              onChange={(e) =>
+                setQuestionText(
+                  e.target.value
+                )
+              }
+              rows={5}
+              placeholder="Enter the complete question..."
+              className="w-full resize-y rounded-xl border border-slate-300 px-4 py-3 text-sm leading-6 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            />
+
+          </div>
+
+
+          {/* OPTIONS */}
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+
+            <div className="mb-5">
+
+              <h2 className="text-lg font-extrabold text-[#123f82]">
+                Answer Options
+              </h2>
+
+              <p className="mt-1 text-xs text-slate-500">
+                Enter four options. The quiz engine will
+                later randomize their displayed order.
+              </p>
+
+            </div>
+
+            <div className="space-y-4">
+
+              {options.map(
+                (option, index) => {
+
+                  const letter =
+                    String.fromCharCode(
+                      65 + index
+                    );
+
+                  return (
+                    <div
+                      key={option.id}
+                      className="flex gap-3"
+                    >
+
+                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-100 font-extrabold text-[#123f82]">
+                        {letter}
+                      </div>
+
+                      <input
+                        type="text"
+                        value={option.text}
+                        onChange={(e) =>
+                          updateOption(
+                            option.id,
+                            e.target.value
+                          )
+                        }
+                        placeholder={`Option ${letter}`}
+                        className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      />
+
+                    </div>
+                  );
+                }
+              )}
+
+            </div>
+
+          </div>
+
+
+          {/* CORRECT ANSWER */}
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+
+            <h2 className="text-lg font-extrabold text-[#123f82]">
+              Correct Answer *
+            </h2>
+
+            <p className="mt-1 text-xs text-slate-500">
+              Select the correct option.
+            </p>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+
+              {options.map(
+                (option, index) => {
+
+                  const letter =
+                    String.fromCharCode(
+                      65 + index
+                    );
+
+                  return (
+                    <label
+                      key={option.id}
+                      className={`flex cursor-pointer items-center gap-3 rounded-xl border p-4 transition ${
+                        correctOptionId ===
+                        option.id
+                          ? "border-emerald-400 bg-emerald-50"
+                          : "border-slate-200 hover:bg-slate-50"
+                      }`}
+                    >
+
+                      <input
+                        type="radio"
+                        name="correctAnswer"
+                        value={option.id}
+                        checked={
+                          correctOptionId ===
+                          option.id
+                        }
+                        onChange={() =>
+                          setCorrectOptionId(
+                            option.id
+                          )
+                        }
+                        className="h-4 w-4"
+                      />
+
+                      <div>
+
+                        <p className="text-sm font-extrabold text-slate-700">
+                          Option {letter}
+                        </p>
+
+                        <p className="mt-1 line-clamp-2 text-xs text-slate-500">
+                          {option.text ||
+                            "Option not entered yet"}
+                        </p>
+
+                      </div>
+
+                    </label>
+                  );
+                }
+              )}
+
+            </div>
+
+          </div>
+
+
+          {/* EXPLANATION */}
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+
+            <label className="mb-2 block text-sm font-bold text-slate-700">
+              Explanation
+            </label>
+
+            <textarea
+              value={explanation}
+              onChange={(e) =>
+                setExplanation(
+                  e.target.value
+                )
+              }
+              rows={5}
+              placeholder="Enter the explanation for the correct answer. This will be useful in Practice Mode."
+              className="w-full resize-y rounded-xl border border-slate-300 px-4 py-3 text-sm leading-6 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            />
+
+            <p className="mt-2 text-xs text-slate-400">
+              Optional now, but strongly recommended for
+              Practice Mode.
+            </p>
+
+          </div>
+
+
+          {/* REFERENCES */}
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+
+            <h2 className="text-lg font-extrabold text-[#123f82]">
+              Reference & Revision
+            </h2>
+
+            <p className="mt-1 text-xs leading-5 text-slate-500">
+              These fields are important because departmental
+              rules may subsequently be modified by orders,
+              circulars or amendments.
+            </p>
+
+            <div className="mt-5 space-y-5">
+
+              <div>
+
+                <label className="mb-2 block text-sm font-bold text-slate-700">
+                  Source / Book Reference
+                </label>
+
+                <input
+                  type="text"
+                  value={sourceReference}
+                  onChange={(e) =>
+                    setSourceReference(
+                      e.target.value
+                    )
+                  }
+                  placeholder="e.g. PO Guide Part-I, Chapter 1, Rule 5"
+                  className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                />
+
+              </div>
+
+
+              <div>
+
+                <label className="mb-2 block text-sm font-bold text-slate-700">
+                  Amendment / Order Reference
+                </label>
+
+                <textarea
+                  value={amendmentReference}
+                  onChange={(e) =>
+                    setAmendmentReference(
+                      e.target.value
+                    )
+                  }
+                  rows={3}
+                  placeholder="Optional. Enter subsequent order/circular/amendment reference if applicable."
+                  className="w-full resize-y rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                />
+
+              </div>
+
+            </div>
+
+          </div>
+
+
+          {/* PUBLICATION SETTINGS */}
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+
+            <h2 className="text-lg font-extrabold text-[#123f82]">
+              Publication
+            </h2>
+
+            <div className="mt-5 space-y-5">
+
+              {/* Status */}
+
+              <div>
+
+                <label className="mb-2 block text-sm font-bold text-slate-700">
+                  Status
+                </label>
+
+                <select
+                  value={status}
+                  onChange={(e) =>
+                    setStatus(
+                      e.target.value as
+                        | "draft"
+                        | "published"
+                    )
+                  }
+                  className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                >
+                  <option value="draft">
+                    Draft — Not visible to aspirants
+                  </option>
+
+                  <option value="published">
+                    Published — Available to aspirants
+                  </option>
+                </select>
+
+              </div>
+
+
+              {/* Active */}
+
+              <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+
+                <input
+                  type="checkbox"
+                  checked={active}
+                  onChange={(e) =>
+                    setActive(
+                      e.target.checked
+                    )
+                  }
+                  className="h-4 w-4"
+                />
+
+                <div>
+
+                  <p className="text-sm font-bold text-slate-700">
+                    Question is Active
+                  </p>
+
+                  <p className="mt-1 text-xs text-slate-500">
+                    Inactive questions will not be used
+                    in future quizzes.
+                  </p>
+
+                </div>
+
+              </label>
+
+            </div>
+
+          </div>
+
+
+          {/* SAVE */}
+
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+
+            <Link
+              href={`/admin/quiz/questions?bookId=${encodeURIComponent(
+                bookId
+              )}&chapterId=${encodeURIComponent(
+                chapterId
+              )}`}
+              className="rounded-xl border border-slate-200 bg-white px-6 py-3 text-center text-sm font-bold text-slate-600 hover:bg-slate-50"
+            >
+              Cancel
+            </Link>
+
+            <button
+              type="button"
+              onClick={saveQuestion}
+              disabled={saving}
+              className="rounded-xl bg-[#123f82] px-7 py-3 text-sm font-bold text-white transition hover:bg-[#0d326a] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {saving
+                ? "Saving Question..."
+                : "Save Question"}
+            </button>
+
+          </div>
+
+        </div>
+
+      </section>
+
+    </main>
+  );
+}
+
+export default function AddQuestionPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-slate-50">
+          <div className="mx-auto max-w-4xl px-6 py-16">
+            <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center text-sm font-semibold text-slate-500 shadow-sm">
+              Loading question form...
+            </div>
+          </div>
+        </main>
+      }
+    >
+      <AddQuestionPageContent />
+    </Suspense>
+  );
+}

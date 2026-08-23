@@ -1,0 +1,290 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =====================================================
+    // ADMIN AUTHORIZATION
+    // =====================================================
+    function isAdmin() {
+      return request.auth != null
+        && exists(
+          /databases/$(database)/documents/users/$(request.auth.uid)
+        )
+        && get(
+          /databases/$(database)/documents/users/$(request.auth.uid)
+        ).data.role == "admin";
+    }
+
+
+    // =====================================================
+    // USER PROFILES
+    // =====================================================
+    match /users/{userId} {
+
+      // Admin can read user profiles.
+      // A user can read only their own profile.
+      allow read: if isAdmin()
+                  || (
+                    request.auth != null
+                    && request.auth.uid == userId
+                  );
+
+      // A student can create only their own profile.
+      allow create: if request.auth != null
+                    && request.auth.uid == userId
+                    && request.resource.data.email
+                       == request.auth.token.email
+                    && request.resource.data.role == "student"
+                    && request.resource.data.subscription == "free";
+
+      // Admin can update profiles.
+      // Students can update their own profile, but cannot
+      // change role or subscription.
+      allow update: if isAdmin()
+                    || (
+                      request.auth != null
+                      && request.auth.uid == userId
+                      && request.resource.data.role
+                         == resource.data.role
+                      && request.resource.data.subscription
+                         == resource.data.subscription
+                    );
+
+      // User profile deletion is disabled.
+      allow delete: if false;
+    }
+
+
+    // =====================================================
+    // PURCHASES
+    // =====================================================
+    match /purchases/{purchaseId} {
+
+      // Admin can read all purchases.
+      // A student can read only their own purchases.
+      allow read: if isAdmin()
+                  || (
+                    request.auth != null
+                    && resource.data.uid == request.auth.uid
+                  );
+
+      // Purchases must be created by the secure
+      // server-side Razorpay verification process.
+      allow create: if false;
+
+      // Browser cannot modify or delete purchases.
+      allow update, delete: if false;
+    }
+
+
+    // =====================================================
+    // BOOKS
+    // =====================================================
+    match /books/{bookId} {
+
+      // Admin can read all books, including inactive books.
+      allow read: if isAdmin();
+
+      // Authenticated users can read active books.
+      allow read: if request.auth != null
+                  && resource.data.active == true;
+
+      // Only Admin can create books.
+      allow create: if isAdmin();
+
+      // Only Admin can modify books.
+      allow update: if isAdmin();
+
+      // Only Admin can delete books.
+      allow delete: if isAdmin();
+    }
+
+
+    // =====================================================
+    // QUIZ CHAPTERS
+    // =====================================================
+    match /chapters/{chapterId} {
+
+      // Admin can read all chapters.
+      allow read: if isAdmin();
+
+      // Authenticated users can read active chapters.
+      allow read: if request.auth != null
+                  && resource.data.active == true;
+
+      // Only Admin can create chapters.
+      allow create: if isAdmin();
+
+      // Only Admin can modify chapters.
+      allow update: if isAdmin();
+
+      // Only Admin can delete chapters.
+      allow delete: if isAdmin();
+    }
+
+
+    // =====================================================
+    // QUIZ TOPICS
+    // =====================================================
+    match /topics/{topicId} {
+
+      // Admin can read all topics.
+      allow read: if isAdmin();
+
+      // Authenticated users can read active topics.
+      allow read: if request.auth != null
+                  && resource.data.active == true;
+
+      // Only Admin can create topics.
+      allow create: if isAdmin();
+
+      // Only Admin can modify topics.
+      allow update: if isAdmin();
+
+      // Only Admin can delete topics.
+      allow delete: if isAdmin();
+    }
+
+
+    // =====================================================
+    // QUESTION BANK
+    // =====================================================
+    match /questions/{questionId} {
+
+      // Admin can read all questions, including drafts.
+      allow read: if isAdmin();
+
+      // Students can read only published/active questions.
+      allow read: if request.auth != null
+                  && resource.data.active == true
+                  && resource.data.status == "published";
+
+      // Only Admin can create questions.
+      allow create: if isAdmin();
+
+      // Only Admin can modify questions.
+      allow update: if isAdmin();
+
+      // Only Admin can delete questions.
+      allow delete: if isAdmin();
+    }
+
+
+    // =====================================================
+    // CURATED QUIZ SETS
+    // =====================================================
+    match /quizSets/{quizSetId} {
+
+      // Admin can read all sets.
+      allow read: if isAdmin();
+
+      // Students can read only published quiz sets.
+      allow read: if request.auth != null
+                  && resource.data.active == true
+                  && resource.data.status == "published";
+
+      // Only Admin can create quiz sets.
+      allow create: if isAdmin();
+
+      // Only Admin can modify quiz sets.
+      allow update: if isAdmin();
+
+      // Only Admin can delete quiz sets.
+      allow delete: if isAdmin();
+    }
+
+
+    // =====================================================
+    // QUIZ ATTEMPTS
+    // =====================================================
+    match /quizAttempts/{attemptId} {
+
+      // Student can read only their own attempts.
+      // Admin can read all attempts.
+      allow read: if isAdmin()
+                  || (
+                    request.auth != null
+                    && resource.data.userId == request.auth.uid
+                  );
+
+      // A logged-in student can create an attempt only
+      // for themselves.
+      allow create: if request.auth != null
+                    && request.resource.data.userId
+                       == request.auth.uid;
+
+      // Student cannot modify another user's attempt.
+      // Admin can modify attempts if required.
+      allow update: if isAdmin()
+                    || (
+                      request.auth != null
+                      && resource.data.userId
+                         == request.auth.uid
+                    );
+
+      // Attempts should normally not be deleted.
+      allow delete: if isAdmin();
+    }
+
+
+    // =====================================================
+    // QUESTION REPORTS / STUDENT COMMENTS
+    // =====================================================
+    match /questionReports/{reportId} {
+
+      // Admin can read all reports.
+      // Student can read only their own reports.
+      allow read: if isAdmin()
+                  || (
+                    request.auth != null
+                    && resource.data.userId
+                       == request.auth.uid
+                  );
+
+      // Logged-in students can submit reports/comments
+      // only under their own identity.
+      allow create: if request.auth != null
+                    && request.resource.data.userId
+                       == request.auth.uid;
+
+      // Admin can review/update reports.
+      allow update: if isAdmin();
+
+      // Admin can delete reports.
+      allow delete: if isAdmin();
+    }
+
+
+    // =====================================================
+    // COURSE MATERIALS
+    // =====================================================
+    match /courseMaterials/{materialId} {
+
+      // Admin can read all materials.
+      allow read: if isAdmin();
+
+      // Authenticated users can read active materials.
+      allow read: if request.auth != null
+                  && resource.data.active == true;
+
+      // Only Admin can create materials.
+      allow create: if isAdmin();
+
+      // Only Admin can modify materials.
+      allow update: if isAdmin();
+
+      // Only Admin can delete materials.
+      allow delete: if isAdmin();
+    }
+
+
+    // =====================================================
+    // DEFAULT DENY
+    // =====================================================
+    // Anything not explicitly permitted above is denied.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

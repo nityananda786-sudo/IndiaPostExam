@@ -1,0 +1,666 @@
+﻿import { NextRequest, NextResponse } from "next/server";
+import { createHash } from "crypto";
+
+import { adminAuth, adminDb } from "@/lib/firebase-admin";
+
+
+function cleanText(value: unknown): string {
+  return String(value ?? "")
+    .replace(/\u00A0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+
+function normalizeQuestionText(
+  value: unknown
+): string {
+  return cleanText(value)
+    .toLowerCase()
+    .replace(/[“”„‟]/g, '"')
+    .replace(/[‘’‚‛]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+
+function fingerprint(
+  value: unknown
+): string {
+  return createHash("sha256")
+    .update(
+      normalizeQuestionText(value),
+      "utf8"
+    )
+    .digest("hex");
+}
+
+
+async function verifyAdmin(
+  request: NextRequest
+) {
+  const authorization =
+    request.headers.get("authorization");
+
+  if (
+    !authorization ||
+    !authorization.startsWith("Bearer ")
+  ) {
+    return {
+      ok: false,
+      error: "Authentication required.",
+    };
+  }
+
+  const idToken =
+    authorization
+      .substring(7)
+      .trim();
+
+  if (!idToken) {
+    return {
+      ok: false,
+      error: "Authentication token missing.",
+    };
+  }
+
+  try {
+    const decodedToken =
+      await adminAuth.verifyIdToken(
+        idToken
+      );
+
+    if (
+      decodedToken.admin === true ||
+      decodedToken.role === "admin"
+    ) {
+      return {
+        ok: true,
+        uid: decodedToken.uid,
+      };
+    }
+
+    const userSnapshot =
+      await adminDb
+        .collection("users")
+        .doc(decodedToken.uid)
+        .get();
+
+    if (!userSnapshot.exists) {
+      return {
+        ok: false,
+        error:
+          "Admin user profile not found.",
+      };
+    }
+
+    const userData =
+      userSnapshot.data() || {};
+
+    const role =
+      String(
+        userData.role ||
+        userData.userRole ||
+        ""
+      )
+        .trim()
+        .toLowerCase();
+
+    if (
+      role !== "admin" &&
+      role !== "administrator"
+    ) {
+      return {
+        ok: false,
+        error:
+          "Administrator access required.",
+      };
+    }
+
+    return {
+      ok: true,
+      uid: decodedToken.uid,
+    };
+
+  } catch (error) {
+    console.error(
+      "Fingerprint migration authentication error:",
+      error
+    );
+
+    return {
+      ok: false,
+      error:
+        "Invalid, expired, or unauthorized authentication token.",
+    };
+  }
+}
+
+
+/*
+ * STEP 23I-32
+ *
+ * Preview only.
+ *
+ * This endpoint intentionally performs NO Firestore writes.
+ */
+export async function GET(
+  request: NextRequest
+) {
+  try {
+    const auth =
+      await verifyAdmin(request);
+
+    if (!auth.ok) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: auth.error,
+        },
+        {
+          status: 401,
+        }
+      );
+    }
+
+    const questionSnapshot =
+      await adminDb
+        .collection("questions")
+        .get();
+
+    const groups =
+      new Map<
+        string,
+        string[]
+      >();
+
+    for (
+      const questionDoc of
+      questionSnapshot.docs
+    ) {
+      const data =
+        questionDoc.data();
+
+      const questionText =
+        cleanText(
+          data.questionText
+        );
+
+      if (!questionText) {
+        continue;
+      }
+
+      const hash =
+        fingerprint(
+          questionText
+        );
+
+      const current =
+        groups.get(hash) || [];
+
+      current.push(
+        questionDoc.id
+      );
+
+      groups.set(
+        hash,
+        current
+      );
+    }
+
+    const duplicateGroups =
+      Array.from(
+        groups.entries()
+      )
+        .filter(
+          ([, ids]) =>
+            ids.length > 1
+        )
+        .map(
+          ([hash, ids]) => ({
+            fingerprint: hash,
+            questionIds: ids,
+            count: ids.length,
+          })
+        );
+
+    return NextResponse.json({
+      success: true,
+      readOnly: true,
+      totalQuestions:
+        questionSnapshot.size,
+      duplicateGroups,
+    });
+
+  } catch (error: any) {
+    console.error(
+      "Fingerprint migration preview error:",
+      error
+    );
+
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          error?.message ||
+          "Unable to generate migration preview.",
+      },
+      {
+        status: 500,
+      }
+    );
+  }
+}
+/*
+ * =====================================================
+ * POST — EXPLICIT DUPLICATE MIGRATION
+ * =====================================================
+ *
+ * This operation is intentionally explicit.
+ *
+ * The caller must provide:
+ *
+ *   fingerprint
+ *   canonicalQuestionId
+ *   duplicateQuestionIds
+ *
+ * No question document is deleted.
+ *
+ * The canonical question receives the fingerprint.
+ * Duplicate questions are preserved and marked:
+ *
+ *   duplicateStatus: "superseded"
+ *   duplicateOf: canonicalQuestionId
+ *
+ * The fingerprint index points to the canonical question.
+ *
+ * The entire operation is performed in one Firestore
+ * transaction.
+ */
+
+export async function POST(
+  request: NextRequest
+) {
+
+  try {
+
+    const auth =
+      await verifyAdmin(
+        request
+      );
+
+    if (!auth.ok) {
+
+      return NextResponse.json(
+        {
+          success: false,
+          error: auth.error,
+        },
+        {
+          status: 401,
+        }
+      );
+    }
+
+
+    const body =
+      await request.json();
+
+
+    const requestedFingerprint =
+      cleanText(
+        body.fingerprint
+      );
+
+    const canonicalQuestionId =
+      cleanText(
+        body.canonicalQuestionId
+      );
+
+    const duplicateQuestionIds =
+      Array.isArray(
+        body.duplicateQuestionIds
+      )
+        ? Array.from(
+            new Set(
+              body.duplicateQuestionIds
+                .map(cleanText)
+                .filter(Boolean)
+            )
+          )
+        : [];
+
+
+    if (
+      !requestedFingerprint ||
+      !canonicalQuestionId ||
+      duplicateQuestionIds.length === 0
+    ) {
+
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "fingerprint, canonicalQuestionId and duplicateQuestionIds are required.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+
+    if (
+      duplicateQuestionIds.includes(
+        canonicalQuestionId
+      )
+    ) {
+
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "The canonical question cannot also be listed as a duplicate.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+
+    const fingerprintRef =
+      adminDb
+        .collection(
+          "questionFingerprints"
+        )
+        .doc(
+          requestedFingerprint
+        );
+
+
+    const canonicalRef =
+      adminDb
+        .collection("questions")
+        .doc(
+          canonicalQuestionId
+        );
+
+
+    const duplicateRefs =
+      duplicateQuestionIds.map(
+        (questionId) =>
+          adminDb
+            .collection("questions")
+            .doc(questionId)
+      );
+
+
+    const result =
+      await adminDb.runTransaction(
+        async (
+          transaction
+        ) => {
+
+          const canonicalSnapshot =
+            await transaction.get(
+              canonicalRef
+            );
+
+
+          if (
+            !canonicalSnapshot.exists
+          ) {
+
+            throw new Error(
+              `Canonical question ${canonicalQuestionId} was not found.`
+            );
+          }
+
+
+          const canonicalData =
+            canonicalSnapshot.data() ||
+            {};
+
+
+          const canonicalText =
+            cleanText(
+              canonicalData.questionText
+            );
+
+
+          if (!canonicalText) {
+
+            throw new Error(
+              "Canonical question has no valid question text."
+            );
+          }
+
+
+          const actualFingerprint =
+            fingerprint(
+              canonicalText
+            );
+
+
+          if (
+            actualFingerprint !==
+            requestedFingerprint
+          ) {
+
+            throw new Error(
+              "The supplied fingerprint does not match the canonical question text."
+            );
+          }
+
+
+          const fingerprintSnapshot =
+            await transaction.get(
+              fingerprintRef
+            );
+
+
+          if (
+            fingerprintSnapshot.exists
+          ) {
+
+            const fingerprintData =
+              fingerprintSnapshot.data() ||
+              {};
+
+            const indexedQuestionId =
+              cleanText(
+                fingerprintData.questionId
+              );
+
+
+            if (
+              indexedQuestionId &&
+              indexedQuestionId !==
+                canonicalQuestionId
+            ) {
+
+              throw new Error(
+                `Fingerprint is already indexed to ${indexedQuestionId}.`
+              );
+            }
+
+          }
+
+
+          const duplicateSnapshots =
+            [];
+
+          for (
+            const duplicateRef of
+            duplicateRefs
+          ) {
+
+            duplicateSnapshots.push(
+              await transaction.get(
+                duplicateRef
+              )
+            );
+
+          }
+
+
+          for (
+            let i = 0;
+            i < duplicateSnapshots.length;
+            i++
+          ) {
+
+            const duplicateSnapshot =
+              duplicateSnapshots[i];
+
+            const duplicateQuestionId =
+              duplicateQuestionIds[i];
+
+
+            if (
+              !duplicateSnapshot.exists
+            ) {
+
+              throw new Error(
+                `Duplicate question ${duplicateQuestionId} was not found.`
+              );
+            }
+
+
+            const duplicateData =
+              duplicateSnapshot.data() ||
+              {};
+
+
+            const duplicateText =
+              cleanText(
+                duplicateData.questionText
+              );
+
+
+            if (
+              fingerprint(
+                duplicateText
+              ) !==
+              requestedFingerprint
+            ) {
+
+              throw new Error(
+                `Question ${duplicateQuestionId} does not match the supplied fingerprint.`
+              );
+            }
+
+
+            transaction.update(
+              duplicateRefs[i],
+              {
+
+                duplicateStatus:
+                  "superseded",
+
+                duplicateOf:
+                  canonicalQuestionId,
+
+                updatedAt:
+                  new Date(),
+
+              }
+            );
+
+          }
+
+
+          transaction.set(
+            canonicalRef,
+            {
+              questionFingerprint:
+                requestedFingerprint,
+
+              duplicateStatus:
+                "canonical",
+
+              updatedAt:
+                new Date(),
+            },
+            {
+              merge: true,
+            }
+          );
+
+
+          transaction.set(
+            fingerprintRef,
+            {
+
+              questionId:
+                canonicalQuestionId,
+
+              questionFingerprint:
+                requestedFingerprint,
+
+              normalizedText:
+                normalizeQuestionText(
+                  canonicalText
+                ),
+
+              updatedAt:
+                new Date(),
+
+            },
+            {
+              merge: true,
+            }
+          );
+
+
+          return {
+            canonicalQuestionId,
+            duplicateQuestionIds,
+            fingerprint:
+              requestedFingerprint,
+          };
+
+        }
+      );
+
+
+    return NextResponse.json({
+      success: true,
+
+      migrated: true,
+
+      deleted: false,
+
+      ...result,
+
+      message:
+        "Duplicate questions were preserved and marked as superseded. The canonical question now owns the fingerprint index.",
+    });
+
+
+  } catch (error: any) {
+
+    console.error(
+      "Fingerprint migration error:",
+      error
+    );
+
+
+    return NextResponse.json(
+      {
+        success: false,
+
+        error:
+          error?.message ||
+          "Unable to migrate duplicate questions.",
+      },
+      {
+        status: 500,
+      }
+    );
+
+  }
+
+}
+

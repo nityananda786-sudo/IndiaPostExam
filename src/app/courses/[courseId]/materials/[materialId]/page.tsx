@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -77,8 +77,9 @@ export default function ProtectedMaterialPage() {
     useState("");
 
 
-  const course =
-    courses[courseId];
+ const course = courses.find(
+  (item) => item.id === courseId
+);
 
 
   // =====================================================
@@ -341,7 +342,7 @@ export default function ProtectedMaterialPage() {
         <div className="mx-auto max-w-xl rounded-3xl bg-white p-8 text-center shadow-sm">
 
           <div className="text-5xl">
-            ⚠️
+            âš ï¸
           </div>
 
           <h1 className="mt-5 text-2xl font-black text-[#102f63]">
@@ -359,7 +360,7 @@ export default function ProtectedMaterialPage() {
             }
             className="mt-6 rounded-xl bg-[#123b78] px-6 py-3 font-bold text-white"
           >
-            ← Back to Courses
+            â† Back to Courses
           </button>
 
         </div>
@@ -415,7 +416,7 @@ export default function ProtectedMaterialPage() {
         <div className="mx-auto max-w-xl rounded-3xl bg-white p-8 text-center shadow-sm">
 
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-red-50 text-3xl">
-            🔒
+            ðŸ”’
           </div>
 
           <h1 className="mt-5 text-2xl font-black text-[#102f63]">
@@ -436,7 +437,7 @@ export default function ProtectedMaterialPage() {
             }
             className="mt-6 rounded-xl bg-[#123b78] px-6 py-3 font-bold text-white"
           >
-            ← Back to Course
+            â† Back to Course
           </button>
 
         </div>
@@ -502,7 +503,7 @@ export default function ProtectedMaterialPage() {
             }
             className="text-sm font-semibold text-blue-100 hover:text-white"
           >
-            ← Back to Course
+            â† Back to Course
           </button>
 
 
@@ -546,7 +547,7 @@ export default function ProtectedMaterialPage() {
             <div className="flex items-start gap-4">
 
               <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-2xl">
-                📖
+                ðŸ“–
               </div>
 
               <div>
@@ -573,7 +574,7 @@ export default function ProtectedMaterialPage() {
 
 
             <span className="inline-flex w-fit shrink-0 rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
-              ✓ Protected
+              âœ“ Protected
             </span>
 
           </div>
@@ -586,7 +587,7 @@ export default function ProtectedMaterialPage() {
           <div className="mt-8 rounded-2xl border border-blue-100 bg-blue-50/60 p-6 text-center">
 
             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-white text-3xl shadow-sm">
-              📄
+              ðŸ“„
             </div>
 
             <h3 className="mt-4 text-lg font-black text-[#102f63]">
@@ -607,7 +608,7 @@ export default function ProtectedMaterialPage() {
                 rel="noopener noreferrer"
                 className="mt-5 inline-flex items-center justify-center rounded-xl bg-[#123b78] px-7 py-3 font-bold text-white transition hover:bg-[#092b61]"
               >
-                Open Material →
+                Open Material â†’
               </a>
 
             ) : (
@@ -638,7 +639,7 @@ export default function ProtectedMaterialPage() {
                 }
                 className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-700 transition hover:border-[#123b78] hover:text-[#123b78]"
               >
-                ← Previous
+                â† Previous
               </button>
 
             ) : (
@@ -667,7 +668,7 @@ export default function ProtectedMaterialPage() {
                 }
                 className="rounded-xl bg-[#123b78] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#092b61]"
               >
-                Next →
+                Next â†’
               </button>
 
             ) : (
@@ -686,11 +687,11 @@ export default function ProtectedMaterialPage() {
           <div className="mt-6 rounded-2xl border border-emerald-100 bg-emerald-50 px-5 py-4 text-sm text-emerald-700">
 
             <span className="font-bold">
-              🛡️ Protected Course Material
+              ðŸ›¡ï¸ Protected Course Material
             </span>
 
             <p className="mt-1 text-xs leading-5">
-              This material is available only to students
+              This material is available only to aspirants
               with active access to this course.
             </p>
 

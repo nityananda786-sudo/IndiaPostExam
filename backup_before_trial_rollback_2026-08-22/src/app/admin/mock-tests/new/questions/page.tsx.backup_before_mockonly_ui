@@ -1,0 +1,898 @@
+﻿"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import {
+  collection,
+  getDocs,
+  query,
+  where,
+} from "firebase/firestore";
+
+import { db } from "@/lib/firebase";
+
+type SelectionMode = "automatic" | "manual";
+
+type MockTestDraft = {
+  testNumber?: number;
+  durationMinutes?: number;
+  questionCount?: number;
+  publishedDate?: string;
+  selectionMode?: SelectionMode;
+  useQuestionBank?: boolean;
+  useMockOnlyQuestions?: boolean;
+  courseIds?: string[];
+  active?: boolean;
+};
+
+type Question = {
+  id: string;
+  questionId?: string;
+
+  bookId?: string;
+  book?: string;
+
+  chapterId?: string;
+  chapter?: string;
+
+  questionText: string;
+
+  options?: {
+    id: string;
+    text: string;
+  }[];
+
+  correctOptionId?: string;
+
+  status?: string;
+  active?: boolean;
+
+  quizEligible?: boolean;
+
+  createdAt?: {
+    seconds?: number;
+  };
+};
+
+export default function MockTestQuestionsPage() {
+
+  const [draft, setDraft] =
+    useState<MockTestDraft | null>(null);
+
+  const [selectionMode, setSelectionMode] =
+    useState<SelectionMode>("automatic");
+
+  const [questions, setQuestions] =
+    useState<Question[]>([]);
+
+  const [selectedQuestionIds, setSelectedQuestionIds] =
+    useState<string[]>([]);
+
+  const [searchText, setSearchText] =
+    useState("");
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [error, setError] =
+    useState("");
+
+  const [automaticGenerated, setAutomaticGenerated] =
+    useState(false);
+
+
+  // =====================================================
+  // LOAD MOCK TEST DRAFT
+  // =====================================================
+
+  useEffect(() => {
+
+    try {
+
+      const raw =
+        sessionStorage.getItem(
+          "indiaPostExam_mockTestDraft"
+        );
+
+      if (!raw) {
+        setError(
+          "Mock Test configuration was not found. Please return to the Mock Test details page."
+        );
+        setLoading(false);
+        return;
+      }
+
+      const parsed =
+        JSON.parse(raw) as MockTestDraft;
+
+      setDraft(parsed);
+
+      setSelectionMode(
+        parsed.selectionMode === "manual"
+          ? "manual"
+          : "automatic"
+      );
+
+    } catch (err) {
+
+      console.error(
+        "Unable to read Mock Test draft:",
+        err
+      );
+
+      setError(
+        "Unable to read the Mock Test configuration."
+      );
+
+    }
+
+  }, []);
+
+
+  // =====================================================
+  // LOAD MASTER QUESTION BANK
+  // =====================================================
+
+  useEffect(() => {
+
+    async function loadQuestionBank() {
+
+      try {
+
+        setLoading(true);
+        setError("");
+
+        /*
+         * IMPORTANT:
+         *
+         * This is the separate Mock Test builder.
+         *
+         * It reads the MASTER questions collection.
+         *
+         * It does NOT create, update, delete or copy
+         * any question.
+         *
+         * quizEligible is deliberately NOT required here.
+         * A published + active question may be used
+         * in a Mock Test even if it was not selected
+         * for Practice Quiz use.
+         */
+
+        const snapshot =
+          await getDocs(
+            query(
+              collection(db, "questions"),
+              where(
+                "status",
+                "==",
+                "published"
+              )
+            )
+          );
+
+        const data: Question[] =
+          snapshot.docs
+            .map((item) => ({
+              id: item.id,
+              ...(item.data() as Omit<
+                Question,
+                "id"
+              >),
+            }))
+            .filter(
+              (question) =>
+                question.active !== false
+            )
+            .sort((a, b) => {
+
+              const aTime =
+                a.createdAt?.seconds || 0;
+
+              const bTime =
+                b.createdAt?.seconds || 0;
+
+              return bTime - aTime;
+            });
+
+        setQuestions(data);
+
+      } catch (err: any) {
+
+        console.error(
+          "Error loading Mock Test question bank:",
+          err
+        );
+
+        setError(
+          err?.message ||
+            "Unable to load the Question Bank."
+        );
+
+      } finally {
+
+        setLoading(false);
+
+      }
+
+    }
+
+    loadQuestionBank();
+
+  }, []);
+
+
+  // =====================================================
+  // SEARCH
+  // =====================================================
+
+  const filteredQuestions =
+    useMemo(() => {
+
+      const search =
+        searchText
+          .trim()
+          .toLowerCase();
+
+      if (!search) {
+        return questions;
+      }
+
+      return questions.filter(
+        (question) => {
+
+          const text = [
+            question.questionText,
+            question.book,
+            question.chapter,
+            question.questionId,
+            question.bookId,
+            question.chapterId,
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+
+          return text.includes(search);
+        }
+      );
+
+    }, [
+      questions,
+      searchText,
+    ]);
+
+
+  // =====================================================
+  // MANUAL SELECTION
+  // =====================================================
+
+  function toggleQuestion(
+    questionId: string
+  ) {
+
+    setSelectedQuestionIds(
+      (current) => {
+
+        if (
+          current.includes(
+            questionId
+          )
+        ) {
+          return current.filter(
+            (id) =>
+              id !== questionId
+          );
+        }
+
+        if (
+          current.length >= 25
+        ) {
+          return current;
+        }
+
+        return [
+          ...current,
+          questionId,
+        ];
+
+      }
+    );
+
+  }
+
+
+  // =====================================================
+  // AUTOMATIC SELECTION
+  // =====================================================
+
+  function generateAutomaticQuestions() {
+
+    if (
+      questions.length < 25
+    ) {
+      setError(
+        `Only ${questions.length} eligible Question Bank questions are available. At least 25 are required.`
+      );
+      return;
+    }
+
+    setError("");
+
+    const shuffled =
+      [...questions]
+        .sort(
+          () =>
+            Math.random() - 0.5
+        )
+        .slice(0, 25);
+
+    const ids =
+      Array.from(
+        new Set(
+          shuffled.map(
+            (question) =>
+              question.id
+          )
+        )
+      );
+
+    if (
+      ids.length !== 25
+    ) {
+      setError(
+        "Unable to generate 25 unique questions. Please try again."
+      );
+      return;
+    }
+
+    setSelectedQuestionIds(
+      ids
+    );
+
+    setAutomaticGenerated(
+      true
+    );
+
+  }
+
+
+  // =====================================================
+  // CHANGE MODE
+  // =====================================================
+
+  function changeSelectionMode(
+    mode: SelectionMode
+  ) {
+
+    setSelectionMode(mode);
+
+    setSelectedQuestionIds([]);
+
+    setAutomaticGenerated(false);
+
+    setError("");
+
+  }
+
+
+  // =====================================================
+  // CONTINUE
+  // =====================================================
+
+  function continueBuilder() {
+
+    if (
+      selectedQuestionIds.length !== 25
+    ) {
+      setError(
+        `Please select exactly 25 questions. Currently selected: ${selectedQuestionIds.length}.`
+      );
+      return;
+    }
+
+    /*
+     * IMPORTANT:
+     *
+     * We only keep the EXISTING Firestore document IDs.
+     *
+     * No question text, options or question document
+     * is copied anywhere.
+     */
+
+    const updatedDraft = {
+      ...(draft || {}),
+      questionCount: 25,
+      selectionMode,
+      questionIds:
+        Array.from(
+          new Set(
+            selectedQuestionIds
+          )
+        ),
+    };
+
+    sessionStorage.setItem(
+      "indiaPostExam_mockTestDraft",
+      JSON.stringify(
+        updatedDraft
+      )
+    );
+
+    window.location.href =
+      "/admin/mock-tests/new";
+
+  }
+
+
+  // =====================================================
+  // LOADING
+  // =====================================================
+
+  if (loading) {
+
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-50">
+
+        <div className="text-center">
+
+          <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-indigo-100 border-t-indigo-600" />
+
+          <p className="mt-4 text-sm font-bold text-slate-600">
+            Loading Question Bank...
+          </p>
+
+        </div>
+
+      </main>
+    );
+
+  }
+
+
+  const testNumber =
+    draft?.testNumber || 1;
+
+
+  return (
+    <main className="min-h-screen bg-slate-50">
+
+      {/* =================================================
+          HEADER
+      ================================================= */}
+
+      <header className="border-b border-slate-200 bg-white">
+
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 py-5 sm:px-8">
+
+          <div className="min-w-0">
+
+            <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-indigo-600">
+              Mock Test Builder
+            </p>
+
+            <h1 className="mt-1 text-2xl font-black text-[#123b78] sm:text-3xl">
+              Mock Test {testNumber}
+            </h1>
+
+            <p className="mt-1 text-sm font-semibold text-slate-500">
+              Select exactly 25 questions
+            </p>
+
+          </div>
+
+
+          <Link
+            href="/admin/mock-tests/new"
+            className="shrink-0 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-extrabold text-slate-700 transition hover:bg-slate-50"
+          >
+            ← Back
+          </Link>
+
+        </div>
+
+      </header>
+
+
+      <section className="mx-auto max-w-7xl px-5 py-6 sm:px-8">
+
+
+        {/* =================================================
+            SUMMARY
+        ================================================= */}
+
+        <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-5">
+
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+
+            <div>
+
+              <p className="text-xs font-extrabold uppercase tracking-wide text-indigo-600">
+                Question Selection
+              </p>
+
+              <h2 className="mt-1 text-xl font-black text-[#123b78]">
+                Mock Test {testNumber}
+              </h2>
+
+              <p className="mt-1 text-sm font-semibold text-slate-600">
+                25 questions required
+              </p>
+
+            </div>
+
+
+            <div className="rounded-xl bg-white px-6 py-3 text-center shadow-sm">
+
+              <p className="text-xs font-bold text-slate-500">
+                Selected
+              </p>
+
+              <p
+                className={`mt-1 text-2xl font-black ${
+                  selectedQuestionIds.length === 25
+                    ? "text-emerald-600"
+                    : "text-indigo-700"
+                }`}
+              >
+                {selectedQuestionIds.length} / 25
+              </p>
+
+            </div>
+
+          </div>
+
+        </div>
+
+
+        {/* =================================================
+            MODE
+        ================================================= */}
+
+        <div className="mt-5 grid gap-4 md:grid-cols-2">
+
+          <button
+            type="button"
+            onClick={() =>
+              changeSelectionMode(
+                "automatic"
+              )
+            }
+            className={`rounded-2xl border p-5 text-left transition ${
+              selectionMode === "automatic"
+                ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-100"
+                : "border-slate-200 bg-white hover:border-indigo-200"
+            }`}
+          >
+
+            <div className="flex items-center justify-between">
+
+              <span className="text-lg font-black text-indigo-800">
+                Automatic Selection
+              </span>
+
+              {selectionMode ===
+                "automatic" && (
+                <span className="rounded-full bg-indigo-600 px-3 py-1 text-xs font-extrabold text-white">
+                  Selected
+                </span>
+              )}
+
+            </div>
+
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              Randomly select exactly 25 unique
+              published and active questions.
+            </p>
+
+          </button>
+
+
+          <button
+            type="button"
+            onClick={() =>
+              changeSelectionMode(
+                "manual"
+              )
+            }
+            className={`rounded-2xl border p-5 text-left transition ${
+              selectionMode === "manual"
+                ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-100"
+                : "border-slate-200 bg-white hover:border-indigo-200"
+            }`}
+          >
+
+            <div className="flex items-center justify-between">
+
+              <span className="text-lg font-black text-indigo-800">
+                Manual Selection
+              </span>
+
+              {selectionMode ===
+                "manual" && (
+                <span className="rounded-full bg-indigo-600 px-3 py-1 text-xs font-extrabold text-white">
+                  Selected
+                </span>
+              )}
+
+            </div>
+
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              Select exactly 25 questions yourself
+              from the master Question Bank.
+            </p>
+
+          </button>
+
+        </div>
+
+
+        {/* =================================================
+            AUTOMATIC CONTROLS
+        ================================================= */}
+
+        {selectionMode ===
+          "automatic" && (
+
+          <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+
+              <div>
+
+                <h2 className="font-black text-[#123b78]">
+                  Automatic Question Generator
+                </h2>
+
+                <p className="mt-1 text-sm text-slate-500">
+                  Available eligible questions:{" "}
+                  <strong>
+                    {questions.length}
+                  </strong>
+                </p>
+
+              </div>
+
+
+              <button
+                type="button"
+                onClick={
+                  generateAutomaticQuestions
+                }
+                className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-extrabold text-white transition hover:bg-indigo-700"
+              >
+                {automaticGenerated
+                  ? "Generate Another Set"
+                  : "Generate 25 Questions"}
+              </button>
+
+            </div>
+
+          </div>
+
+        )}
+
+
+        {/* =================================================
+            SEARCH
+        ================================================= */}
+
+        <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+
+            <div>
+
+              <h2 className="font-black text-[#123b78]">
+                Question Bank
+              </h2>
+
+              <p className="mt-1 text-xs font-semibold text-slate-500">
+                Published and active questions only
+              </p>
+
+            </div>
+
+
+            <div className="w-full sm:max-w-md">
+
+              <input
+                type="search"
+                value={searchText}
+                onChange={(event) =>
+                  setSearchText(
+                    event.target.value
+                  )
+                }
+                placeholder="Search question, book, chapter or ID..."
+                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+              />
+
+            </div>
+
+          </div>
+
+        </div>
+
+
+        {/* =================================================
+            ERROR
+        ================================================= */}
+
+        {error && (
+
+          <div className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
+            {error}
+          </div>
+
+        )}
+
+
+        {/* =================================================
+            QUESTION LIST
+        ================================================= */}
+
+        <div className="mt-5 space-y-3">
+
+          {filteredQuestions.length === 0 ? (
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center">
+
+              <p className="font-bold text-slate-600">
+                No eligible questions found.
+              </p>
+
+            </div>
+
+          ) : (
+
+            filteredQuestions.map(
+              (question, index) => {
+
+                const selected =
+                  selectedQuestionIds.includes(
+                    question.id
+                  );
+
+                const selectionNumber =
+                  selected
+                    ? selectedQuestionIds.indexOf(
+                        question.id
+                      ) + 1
+                    : null;
+
+                return (
+
+                  <button
+                    key={question.id}
+                    type="button"
+                    onClick={() =>
+                      toggleQuestion(
+                        question.id
+                      )
+                    }
+                    className={`w-full rounded-2xl border p-4 text-left transition sm:p-5 ${
+                      selected
+                        ? "border-indigo-500 bg-indigo-50 ring-1 ring-indigo-200"
+                        : "border-slate-200 bg-white hover:border-indigo-200 hover:bg-slate-50"
+                    }`}
+                  >
+
+                    <div className="flex gap-4">
+
+                      <div
+                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-black ${
+                          selected
+                            ? "bg-indigo-600 text-white"
+                            : "bg-slate-100 text-slate-600"
+                        }`}
+                      >
+                        {selectionNumber ||
+                          index + 1}
+                      </div>
+
+
+                      <div className="min-w-0 flex-1">
+
+                        <div className="flex flex-wrap gap-2">
+
+                          {question.book && (
+                            <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-bold text-blue-700">
+                              {question.book}
+                            </span>
+                          )}
+
+                          {question.chapter && (
+                            <span className="rounded-full bg-purple-50 px-2.5 py-1 text-[11px] font-bold text-purple-700">
+                              {question.chapter}
+                            </span>
+                          )}
+
+                          {question.questionId && (
+                            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600">
+                              {question.questionId}
+                            </span>
+                          )}
+
+                        </div>
+
+
+                        <p className="mt-2 text-sm font-bold leading-6 text-[#17233f] sm:text-base">
+                          {question.questionText}
+                        </p>
+
+
+                        <p className="mt-2 text-xs font-medium text-slate-400">
+                          Firestore ID: {question.id}
+                        </p>
+
+                      </div>
+
+
+                      <div className="shrink-0">
+
+                        <span
+                          className={`inline-flex h-8 w-8 items-center justify-center rounded-full border-2 text-sm font-black ${
+                            selected
+                              ? "border-indigo-600 bg-indigo-600 text-white"
+                              : "border-slate-300 bg-white text-transparent"
+                          }`}
+                        >
+                          ✓
+                        </span>
+
+                      </div>
+
+                    </div>
+
+                  </button>
+
+                );
+
+              }
+            )
+
+          )}
+
+        </div>
+
+
+        {/* =================================================
+            ACTIONS
+        ================================================= */}
+
+        <div className="mt-6 flex flex-col-reverse gap-3 border-t border-slate-200 pt-5 sm:flex-row sm:justify-end">
+
+          <Link
+            href="/admin/mock-tests/new"
+            className="rounded-xl border border-slate-300 bg-white px-6 py-3 text-center text-sm font-extrabold text-slate-700 transition hover:bg-slate-50"
+          >
+            Back to Details
+          </Link>
+
+
+          <button
+            type="button"
+            onClick={
+              continueBuilder
+            }
+            disabled={
+              selectedQuestionIds.length !==
+              25
+            }
+            className={`rounded-xl px-6 py-3 text-sm font-extrabold text-white transition ${
+              selectedQuestionIds.length ===
+              25
+                ? "bg-indigo-600 hover:bg-indigo-700"
+                : "cursor-not-allowed bg-slate-300"
+            }`}
+          >
+            Continue with 25 Questions →
+          </button>
+
+        </div>
+
+      </section>
+
+    </main>
+  );
+}

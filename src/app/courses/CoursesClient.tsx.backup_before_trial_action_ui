@@ -1,0 +1,1146 @@
+﻿"use client";
+
+
+
+
+
+import {
+  subscriptionPlans,
+  calculatePlanPrice,
+  type SubscriptionPlanId,
+} from "@/config/subscriptionPlans";
+
+import SubscriptionPlanSelector from "@/components/courses/SubscriptionPlanSelector";
+
+
+import Image from "next/image";
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { onAuthStateChanged, User } from "firebase/auth";
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  where,
+} from "firebase/firestore";
+
+import { auth, db } from "@/lib/firebase";
+import { courses } from "@/components/featured-courses/courseData";
+
+type UserProfile = {
+  subscription?: string;
+};
+
+export default function CoursesPage() {
+  const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [selectedPlans, setSelectedPlans] =
+  useState<
+    Record<string, SubscriptionPlanId>
+  >({});
+  const [purchasedCourses, setPurchasedCourses] =
+  useState<string[]>([]);
+
+  const [trialStartedAt, setTrialStartedAt] =
+    useState<Date | null>(null);
+
+  const [currentTime, setCurrentTime] =
+    useState<number>(Date.now());
+
+
+  const [courseControls, setCourseControls] =
+    useState<
+      Record<
+        string,
+        {
+          published: boolean;
+          enrollmentOpen: boolean;
+        }
+      >
+    >({});
+
+
+  useEffect(() => {
+  try {
+    const selectedCourseId =
+      sessionStorage.getItem(
+        "selectedCourseId"
+      );
+
+    const selectedPlanId =
+      sessionStorage.getItem(
+        "selectedPlanId"
+      );
+
+    if (
+      !selectedCourseId ||
+      !selectedPlanId
+    ) {
+      return;
+    }
+
+    const validPlans: SubscriptionPlanId[] = [
+      "monthly",
+      "six_month",
+      "annual",
+    ];
+
+    if (
+      !validPlans.includes(
+        selectedPlanId as SubscriptionPlanId
+      )
+    ) {
+      sessionStorage.removeItem(
+        "selectedCourseId"
+      );
+
+      sessionStorage.removeItem(
+        "selectedPlanId"
+      );
+
+      return;
+    }
+
+    setSelectedPlans((previous) => ({
+      ...previous,
+      [selectedCourseId]:
+        selectedPlanId as SubscriptionPlanId,
+    }));
+
+    // Remove after applying the selection
+    sessionStorage.removeItem(
+      "selectedCourseId"
+    );
+
+    sessionStorage.removeItem(
+      "selectedPlanId"
+    );
+  } catch (error) {
+    console.error(
+      "Unable to restore selected course plan:",
+      error
+    );
+  }
+}, []);
+
+  useEffect(() => {
+  const unsubscribe = onAuthStateChanged(
+    auth,
+    async (currentUser) => {
+      if (!currentUser) {
+        window.location.href = "/login";
+        return;
+      }
+
+      setUser(currentUser);
+
+      try {
+        // -----------------------------------------
+        // Load Aspirant profile
+        // -----------------------------------------
+
+        const userRef = doc(
+          db,
+          "users",
+          currentUser.uid
+        );
+
+        const profileSnapshot =
+          await getDoc(userRef);
+
+        if (profileSnapshot.exists()) {
+          const profileData =
+            profileSnapshot.data();
+
+          setProfile(
+            profileData as UserProfile
+          );
+
+          const trialValue =
+            profileData.trialStartedAt;
+
+          if (
+            trialValue &&
+            typeof trialValue === "object" &&
+            typeof trialValue.toDate === "function"
+          ) {
+            setTrialStartedAt(
+              trialValue.toDate()
+            );
+          } else if (
+            typeof trialValue === "string" ||
+            typeof trialValue === "number"
+          ) {
+            const parsedTrialDate =
+              new Date(trialValue);
+
+            if (
+              !Number.isNaN(
+                parsedTrialDate.getTime()
+              )
+            ) {
+              setTrialStartedAt(
+                parsedTrialDate
+              );
+            }
+          }
+        }
+
+        // -----------------------------------------
+        // Load purchased courses
+        // -----------------------------------------
+
+        const purchasesQuery = query(
+          collection(db, "purchases"),
+          where("uid", "==", currentUser.uid)
+        );
+
+        const purchasesSnapshot =
+          await getDocs(purchasesQuery);
+
+        const now = new Date();
+
+const activeCourseIds =
+  purchasesSnapshot.docs
+    .filter((purchase) => {
+      const data = purchase.data();
+
+      if (data.status !== "paid") {
+        return false;
+      }
+
+      // New subscription records must have expiresAt
+      if (!data.expiresAt) {
+        return false;
+      }
+
+      let expiryDate: Date | null = null;
+
+      if (
+        typeof data.expiresAt?.toDate ===
+        "function"
+      ) {
+        expiryDate =
+          data.expiresAt.toDate();
+      } else if (
+        data.expiresAt instanceof Date
+      ) {
+        expiryDate =
+          data.expiresAt;
+      } else if (
+        typeof data.expiresAt === "string" ||
+        typeof data.expiresAt === "number"
+      ) {
+        expiryDate =
+          new Date(data.expiresAt);
+      }
+
+      if (
+        !expiryDate ||
+        Number.isNaN(
+          expiryDate.getTime()
+        )
+      ) {
+        return false;
+      }
+
+      return expiryDate > now;
+    })
+    .map(
+      (purchase) =>
+        purchase.data().courseId
+    )
+    .filter(
+      (courseId): courseId is string =>
+        typeof courseId === "string"
+    );
+
+setPurchasedCourses(
+  activeCourseIds
+);
+
+// Load course publication and enrollment controls
+let coursesSnapshot;
+try {
+  coursesSnapshot =
+    await getDocs(
+      query(
+        collection(db, "courses"),
+        where("published", "==", true)
+      )
+    );
+} catch (courseError) {
+  console.error(
+    "COURSES DEBUG: courses query FAILED:",
+    courseError
+  );
+  throw courseError;
+}
+
+const controls: Record<
+  string,
+  {
+    published: boolean;
+    enrollmentOpen: boolean;
+  }
+> = {};
+
+coursesSnapshot.docs.forEach((courseDoc) => {
+  const data = courseDoc.data();
+
+  controls[courseDoc.id] = {
+    published:
+      data.published ??
+      data.Published ??
+      false,
+
+    enrollmentOpen:
+      data.enrollmentOpen ??
+      data.EnrollmentOpen ??
+      false,
+  };
+});
+
+setCourseControls(controls);
+      } catch (error) {
+        console.error(
+          "Unable to load course access:",
+          error
+        );
+      } finally {
+        setLoading(false);
+      }
+    }
+  );
+
+  
+
+  return () => unsubscribe();
+}, []);
+
+  if (loading) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-gray-200 border-t-red-600" />
+          <p className="mt-4 text-sm font-semibold text-gray-600">
+            Loading courses...
+          </p>
+        </div>
+      </main>
+    );
+  }
+
+  useEffect(() => {
+    if (!trialStartedAt) {
+      return;
+    }
+
+    const timer =
+      window.setInterval(() => {
+        setCurrentTime(
+          Date.now()
+        );
+      }, 1000);
+
+    return () =>
+      window.clearInterval(timer);
+  }, [trialStartedAt]);
+  const TRIAL_DURATION_MS =
+    60 * 60 * 1000;
+
+  const trialExpiresAt =
+    trialStartedAt
+      ? new Date(
+          trialStartedAt.getTime() +
+            TRIAL_DURATION_MS
+        )
+      : null;
+
+  const trialRemainingMs =
+    trialExpiresAt
+      ? Math.max(
+          0,
+          trialExpiresAt.getTime() -
+            currentTime
+        )
+      : 0;
+
+  const trialActive =
+    trialRemainingMs > 0;
+
+  const trialExpired =
+    Boolean(trialStartedAt) &&
+    !trialActive;
+
+  function formatTrialRemaining(
+    milliseconds: number
+  ): string {
+    const totalSeconds =
+      Math.ceil(
+        milliseconds / 1000
+      );
+
+    const hours =
+      Math.floor(
+        totalSeconds / 3600
+      );
+
+    const minutes =
+      Math.floor(
+        (totalSeconds % 3600) / 60
+      );
+
+    const seconds =
+      totalSeconds % 60;
+
+    if (hours > 0) {
+      return `${hours}h ${minutes}m ${seconds}s`;
+    }
+
+    return `${minutes}m ${seconds}s`;
+  }
+  const isPremium = profile?.subscription === "premium";
+
+  const visibleCourses = courses.filter((course) => {
+    const purchased =
+      purchasedCourses.includes(course.id);
+
+    const control =
+      courseControls[course.id];
+
+    // Existing purchasers retain access
+    // even when the course is unpublished.
+    if (purchased) {
+      return true;
+    }
+
+    // New/public aspirants see only published courses.
+    return control?.published === true;
+  });
+
+  return (
+    <main className="min-h-screen overflow-x-hidden bg-[#f7f8fb]">
+
+      {/* HEADER */}
+      <header className="border-b border-gray-200 bg-white">
+        <div className="mx-auto flex min-h-[82px] w-full max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+
+          <Link
+            href="/"
+            className="relative flex h-[65px] w-[220px] shrink-0 items-center"
+          >
+            <Image
+              src="/logo/logo.png"
+              alt="IndiaPostExam"
+              fill
+              priority
+              sizes="220px"
+              className="object-contain object-left"
+            />
+          </Link>
+
+          <div className="flex items-center gap-2 sm:gap-3">
+            <Link
+              href="/dashboard"
+              className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-bold text-gray-700 transition hover:border-red-500 hover:text-red-600 sm:px-4 sm:text-sm"
+            >
+              Dashboard
+            </Link>
+
+            <Link
+              href="/profile"
+              className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-red-700 sm:px-4 sm:text-sm"
+            >
+              Profile
+            </Link>
+          </div>
+
+        </div>
+      </header>
+
+      {/* TITLE */}
+      <section className="mx-auto w-full max-w-7xl px-4 pb-5 pt-8 sm:px-6 lg:px-8">
+
+        <div className="text-center">
+          <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-red-600">
+            IndiaPostExam
+          </p>
+
+          <h1 className="mt-2 text-2xl font-extrabold text-[#10244a] sm:text-4xl">
+            Courses for Aspirants
+          </h1>
+
+          <p className="mx-auto mt-2 max-w-xl text-sm text-gray-600">
+            Choose your promotion path and start your preparation.
+          </p>
+        </div>
+
+        {/* MEMBERSHIP */}
+        <div className="mx-auto mt-6 flex w-full max-w-5xl flex-col gap-3 rounded-xl border border-gray-200 bg-white px-5 py-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wide text-gray-400">
+              Current Access
+            </p>
+
+            <p className="mt-1 text-base font-extrabold text-[#10244a]">
+              {isPremium ? "Premium Aspirant" : "Aspirant"}
+            </p>
+          </div>
+
+
+        </div>
+      </section>
+
+      {/* COURSES */}
+      <section className="mx-auto w-full max-w-7xl px-4 pb-12 sm:px-6 lg:px-8">
+
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+
+          {visibleCourses.map((course) => {
+
+            const purchased =
+  purchasedCourses.includes(course.id);
+
+  const selectedPlan =
+  selectedPlans[course.id] || "monthly";
+
+            return (
+              <article
+                key={course.id}
+                className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-lg"
+              >
+
+                {/* VISUAL */}
+                <div
+                  className={`relative flex h-32 items-center justify-center bg-gradient-to-br ${course.theme.background}`}
+                >
+
+                  <div
+                    className={`flex h-20 w-20 items-center justify-center rounded-full ${course.theme.iconBackground} text-4xl shadow-sm`}
+                  >
+                    {course.icon}
+                  </div>
+
+                  <div className="absolute right-4 top-4">
+                    <span className="rounded-full bg-amber-100 px-3 py-1 text-[11px] font-extrabold text-amber-700">
+                      PREMIUM
+                    </span>
+                  </div>
+
+                </div>
+
+                {/* CONTENT */}
+                <div className="p-5">
+
+                  <p className="text-[11px] font-extrabold uppercase tracking-wide text-red-600">
+                    {course.subtitle}
+                  </p>
+
+                  <h2 className="mt-1 text-xl font-extrabold leading-tight text-[#10244a]">
+                    {course.title}
+                  </h2>
+
+                  <p className="mt-3 min-h-[60px] text-sm leading-6 text-gray-600">
+                    {course.description}
+                  </p>
+
+                  {/* PRICE */}
+                  <div className="mt-4 flex items-center gap-2">
+                    <span className="text-2xl font-extrabold text-red-600">
+                      Rs. {course.fee}
+                    </span>
+
+                    {course.originalFee > course.fee && (
+                      <span className="text-sm text-gray-400 line-through">
+                        Rs. {course.originalFee}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* ACTION */}
+<div className="mt-5">
+  {purchased ? (
+  <div>
+    <Link
+      href={`/courses/${course.id}`}
+      className="block rounded-xl bg-[#12366f] px-4 py-3 text-center text-sm font-extrabold text-white transition hover:bg-[#0e2c5c]"
+    >
+      Access Course
+    </Link>
+
+    <Link
+      href={`/courses/${course.id}`}
+      className="mt-2 block text-center text-xs font-extrabold text-red-600 hover:text-red-700"
+    >
+      Renew in Advance
+    </Link>
+  </div>
+) : (
+    <div>
+      <SubscriptionPlanSelector
+        monthlyFee={course.fee}
+        selectedPlan={selectedPlan}
+        onPlanChange={(planId) =>
+          setSelectedPlans((previous) => ({
+            ...previous,
+            [course.id]: planId,
+          }))
+        }
+      />
+
+      <div className="mt-4">
+        <BuyCourseButton
+          courseId={course.id}
+          courseName={course.title}
+          fee={course.fee}
+          planId={selectedPlan}
+        />
+      </div>
+
+      <p className="mt-2 text-center text-xs font-semibold text-slate-500">
+  Subscription validity is calculated securely according to your selected plan.
+</p>
+    </div>
+  )}
+</div>
+
+</div>
+</article>
+);
+})}
+</div>
+</section>
+
+<div className="mt-10 pb-10 text-center">
+  <Link
+    href="/dashboard"
+    className="text-sm font-bold text-gray-600 transition hover:text-red-600"
+  >
+    Back to Dashboard
+  </Link>
+</div>
+
+</main>
+);
+}
+   
+   function BuyCourseButton({
+  courseId,
+  courseName,
+  fee,
+  planId,
+}: {
+  courseId: string;
+  courseName: string;
+  fee: number;
+  planId: SubscriptionPlanId;
+}) {
+  const [loading, setLoading] =
+    useState(false);
+
+  const [paymentSuccess, setPaymentSuccess] =
+    useState(false);
+
+  const [paymentId, setPaymentId] =
+    useState("");
+
+  const selectedPlan =
+    subscriptionPlans.find(
+      (plan) => plan.id === planId
+    );
+
+  const selectedPrice =
+    selectedPlan
+      ? calculatePlanPrice(
+          fee,
+          selectedPlan
+        )
+      : fee;
+
+  const selectedPlanName =
+    planId === "monthly"
+      ? "1 Month"
+      : planId === "six_month"
+      ? "6 Months"
+      : "1 Year";
+
+  const handlePurchase =
+    async () => {
+      try {
+        setLoading(true);
+
+        // -----------------------------------------
+        // 1. Load Razorpay Checkout
+        // -----------------------------------------
+
+        const existingScript =
+          document.querySelector(
+            'script[src="https://checkout.razorpay.com/v1/checkout.js"]'
+          );
+
+        if (!existingScript) {
+          const script =
+            document.createElement(
+              "script"
+            );
+
+          script.src =
+            "https://checkout.razorpay.com/v1/checkout.js";
+
+          script.async = true;
+
+          document.body.appendChild(
+            script
+          );
+
+          await new Promise<void>(
+            (
+              resolve,
+              reject
+            ) => {
+              script.onload =
+                () => resolve();
+
+              script.onerror =
+                () =>
+                  reject(
+                    new Error(
+                      "Unable to load Razorpay Checkout."
+                    )
+                  );
+            }
+          );
+        }
+
+        // -----------------------------------------
+        // 2. Create Razorpay order
+        // -----------------------------------------
+
+        const response =
+          await fetch(
+            "/api/razorpay/create-order",
+            {
+              method: "POST",
+
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
+
+              body: JSON.stringify({
+                courseId,
+                planId,
+              }),
+            }
+          );
+
+        const data =
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data?.error ||
+              "Unable to create payment order."
+          );
+        }
+
+        if (!data?.order?.id) {
+          throw new Error(
+            "Invalid Razorpay order response."
+          );
+        }
+
+        // -----------------------------------------
+        // 3. Razorpay constructor
+        // -----------------------------------------
+
+        const RazorpayConstructor =
+          (
+            window as unknown as {
+              Razorpay: new (
+                options: Record<
+                  string,
+                  unknown
+                >
+              ) => {
+                open: () => void;
+              };
+            }
+          ).Razorpay;
+
+        if (!RazorpayConstructor) {
+          throw new Error(
+            "Razorpay Checkout could not be initialized."
+          );
+        }
+
+        // -----------------------------------------
+        // 4. Razorpay options
+        // -----------------------------------------
+
+        const options = {
+          key:
+            data.keyId,
+
+          amount:
+            data.order.amount,
+
+          currency:
+            data.order.currency,
+
+          name:
+            "IndiaPostExam",
+
+          description:
+            `${courseName} - ${selectedPlanName}`,
+
+          order_id:
+            data.order.id,
+
+          prefill: {
+            name: "",
+            email: "",
+          },
+
+          notes: {
+            courseId,
+            planId,
+            source:
+              "IndiaPostExam",
+          },
+
+          theme: {
+            color:
+              "#dc2626",
+          },
+
+          // ---------------------------------------
+          // 5. Payment successful
+          // ---------------------------------------
+
+          handler:
+            async function (
+              paymentResponse: {
+                razorpay_payment_id: string;
+                razorpay_order_id: string;
+                razorpay_signature: string;
+              }
+            ) {
+              try {
+                setLoading(true);
+
+                // ---------------------------------
+                // Get logged-in user
+                // ---------------------------------
+
+                const currentUser =
+                  await import(
+                    "firebase/auth"
+                  ).then(
+                    ({
+                      getAuth,
+                    }) =>
+                      getAuth()
+                        .currentUser
+                  );
+
+                if (!currentUser) {
+                  throw new Error(
+                    "Please log in before completing the purchase."
+                  );
+                }
+
+                // ---------------------------------
+                // Firebase ID token
+                // ---------------------------------
+
+                const idToken =
+                  await currentUser.getIdToken();
+
+                // ---------------------------------
+                // Verify payment
+                // ---------------------------------
+
+                const verificationResponse =
+                  await fetch(
+                    "/api/razorpay/verify-payment",
+                    {
+                      method: "POST",
+
+                      headers: {
+                        "Content-Type":
+                          "application/json",
+
+                        Authorization:
+                          `Bearer ${idToken}`,
+                      },
+
+                      body: JSON.stringify({
+                        courseId,
+
+                        planId,
+
+                        razorpay_payment_id:
+                          paymentResponse.razorpay_payment_id,
+
+                        razorpay_order_id:
+                          paymentResponse.razorpay_order_id,
+
+                        razorpay_signature:
+                          paymentResponse.razorpay_signature,
+                      }),
+                    }
+                  );
+
+                const result =
+                  await verificationResponse.json();
+
+                if (
+                  !verificationResponse.ok ||
+                  !result.success
+                ) {
+                  throw new Error(
+                    result?.error ||
+                      "Payment verification failed."
+                  );
+                }
+
+                console.log(
+                  "Payment verified successfully:",
+                  result
+                );
+
+                // ---------------------------------
+                // SAVE PAYMENT SUCCESS
+                // ---------------------------------
+
+                setPaymentId(
+                  paymentResponse.razorpay_payment_id
+                );
+
+                setPaymentSuccess(
+                  true
+                );
+
+                setLoading(false);
+
+                // Scroll to success message
+                setTimeout(() => {
+                  document
+                    .getElementById(
+                      "purchase-success"
+                    )
+                    ?.scrollIntoView({
+                      behavior:
+                        "smooth",
+                      block:
+                        "center",
+                    });
+                }, 100);
+
+              } catch (error) {
+                console.error(
+                  "Payment verification error:",
+                  error
+                );
+
+                alert(
+                  error instanceof Error
+                    ? error.message
+                    : "Payment verification failed."
+                );
+
+                setLoading(false);
+              }
+            },
+
+          // ---------------------------------------
+          // Razorpay dismissed
+          // ---------------------------------------
+
+          modal: {
+            ondismiss:
+              function () {
+                setLoading(
+                  false
+                );
+              },
+          },
+        };
+
+        // -----------------------------------------
+        // 6. Open Razorpay
+        // -----------------------------------------
+
+        const razorpay =
+          new RazorpayConstructor(
+            options
+          );
+
+        razorpay.open();
+
+      } catch (error) {
+        console.error(
+          "Payment initialization failed:",
+          error
+        );
+
+        alert(
+          error instanceof Error
+            ? error.message
+            : "Unable to start payment."
+        );
+
+        setLoading(false);
+      }
+    };
+
+  // =================================================
+  // PAYMENT SUCCESS SCREEN
+  // =================================================
+
+  if (paymentSuccess) {
+    return (
+      <div
+        id="purchase-success"
+        className="rounded-2xl border border-green-200 bg-green-50 p-5"
+      >
+
+        {/* Success icon */}
+        <div className="text-center">
+
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-green-100 text-3xl">
+            OK
+          </div>
+
+          <h3 className="mt-3 text-xl font-extrabold text-green-800">
+            Payment Successful!
+          </h3>
+
+          <p className="mt-1 text-sm text-green-700">
+            Your course purchase has been
+            successfully completed.
+          </p>
+
+        </div>
+
+        {/* Details */}
+        <div className="mt-5 rounded-xl bg-white p-4">
+
+          {/* Course */}
+          <div>
+            <p className="text-xs font-semibold text-slate-500">
+              Course
+            </p>
+
+            <p className="mt-1 font-extrabold text-[#12366f]">
+              {courseName}
+            </p>
+          </div>
+
+          {/* Plan */}
+          <div className="mt-4 grid grid-cols-2 gap-4">
+
+            <div>
+              <p className="text-xs text-slate-500">
+                Plan Purchased
+              </p>
+
+              <p className="mt-1 font-extrabold text-slate-800">
+                {selectedPlanName}
+              </p>
+            </div>
+
+            <div>
+              <p className="text-xs text-slate-500">
+                Amount Paid
+              </p>
+
+              <p className="mt-1 font-extrabold text-slate-800">
+                Rs. {selectedPrice}
+              </p>
+            </div>
+
+          </div>
+
+          {/* Payment ID */}
+          <div className="mt-4">
+
+            <p className="text-xs text-slate-500">
+              Razorpay Payment ID
+            </p>
+
+            <p className="mt-1 break-all rounded-lg bg-slate-50 p-3 font-mono text-xs text-slate-700">
+              {paymentId}
+            </p>
+
+          </div>
+
+        </div>
+
+        {/* Access confirmation */}
+        <div className="mt-4 rounded-xl bg-green-100 p-3 text-center">
+
+          <p className="text-sm font-extrabold text-green-800">
+            OK Payment verified successfully
+          </p>
+
+          <p className="mt-1 text-xs text-green-700">
+            Your course access has been activated.
+          </p>
+
+        </div>
+
+        {/* Continue */}
+        <Link
+          href={`/courses/${courseId}`}
+          className="mt-4 block w-full rounded-xl bg-red-600 px-5 py-3 text-center text-sm font-extrabold text-white transition hover:bg-red-700"
+        >
+          Continue to Course
+        </Link>
+
+      </div>
+    );
+  }
+
+  // =================================================
+  // NORMAL BUY BUTTON
+  // =================================================
+
+  return (
+    <button
+      type="button"
+      onClick={
+        handlePurchase
+      }
+      disabled={
+        loading
+      }
+      className="w-full rounded-xl bg-red-600 px-5 py-4 text-base font-extrabold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      {loading
+        ? "Opening Payment..."
+        : `Buy Course - Rs. ${selectedPrice}`}
+    </button>
+  );
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
