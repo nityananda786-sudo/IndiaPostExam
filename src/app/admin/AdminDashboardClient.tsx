@@ -336,7 +336,7 @@ export default function AdminDashboard() {
             </p>
 
             <div className="mt-5 font-bold text-red-600">
-              Manage Users →
+              Manage Users & Reports →
             </div>
 
           </Link>
@@ -348,4 +348,5 @@ export default function AdminDashboard() {
     </main>
   );
 }
+
 
