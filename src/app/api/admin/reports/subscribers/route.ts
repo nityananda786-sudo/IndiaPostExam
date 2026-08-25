@@ -119,10 +119,77 @@ function getIndiaYearMonth(
   };
 }
 
+/*
+ * Returns the last instant of the previous
+ * calendar month in India Standard Time.
+ *
+ * Example:
+ * Current month = August 2026
+ * Result = 31 July 2026 23:59:59.999 IST
+ */
+function getPreviousMonthEnd(): Date {
+  const now = new Date();
+
+  const indiaParts =
+    new Intl.DateTimeFormat(
+      "en-US",
+      {
+        timeZone: "Asia/Kolkata",
+        year: "numeric",
+        month: "numeric",
+      }
+    ).formatToParts(now);
+
+  const year = Number(
+    indiaParts.find(
+      (part) =>
+        part.type === "year"
+    )?.value
+  );
+
+  const month = Number(
+    indiaParts.find(
+      (part) =>
+        part.type === "month"
+    )?.value
+  );
+
+  /*
+   * Date.UTC here creates the equivalent UTC
+   * instant for the first day of the current
+   * month at 00:00 IST after applying the
+   * +05:30 offset.
+   *
+   * We calculate the previous month end by
+   * using the first day of the current month
+   * and subtracting 1 millisecond.
+   */
+  const currentMonthStartUtc =
+    Date.UTC(
+      year,
+      month - 1,
+      1,
+      0,
+      0,
+      0,
+      0
+    );
+
+  /*
+   * Convert the IST midnight representation
+   * to its actual UTC instant.
+   */
+  return new Date(
+    currentMonthStartUtc -
+      5.5 * 60 * 60 * 1000 -
+      1
+  );
+}
+
 function courseDisplayName(
   purchase: FirebaseFirestore.DocumentData
 ): string {
-  const id =
+  const key =
     normalizeCourseKey(
       purchase.courseId
     );
@@ -131,28 +198,39 @@ function courseDisplayName(
     string,
     string
   > = {
-    gdsmts: "GDS to MTS",
-    gdstomts: "GDS to MTS",
+    gdsmts:
+      "GDS to MTS",
+
+    gdstomts:
+      "GDS to MTS",
+
     gdspostman:
       "GDS to Postman / Mail Guard",
+
     postman:
       "GDS to Postman / Mail Guard",
+
     postalassistant:
       "Postal Assistant / Sorting Assistant",
+
     pa:
       "Postal Assistant / Sorting Assistant",
+
     inspectorposts:
       "Inspector Posts",
+
     inspector:
       "Inspector Posts",
+
     pssgroupb:
       "PSS Group B",
   };
 
   return (
-    names[id] ||
+    names[key] ||
     String(
       purchase.courseName ??
+        purchase.title ??
         purchase.courseId ??
         "Unknown Course"
     )
@@ -180,41 +258,26 @@ export async function GET(
 
     const now = new Date();
 
-    const {
-      year: currentYear,
-      month: currentMonth,
-    } =
-      getIndiaYearMonth(now);
-
-    let previousYear =
-      currentYear;
-
-    let previousMonth =
-      currentMonth - 1;
-
-    if (previousMonth === 0) {
-      previousMonth = 12;
-      previousYear--;
-    }
-
-    const purchasesSnapshot =
-      await adminDb
-        .collection("purchases")
-        .where(
-          "status",
-          "==",
-          "paid"
-        )
-        .get();
+    /*
+     * Previous Month means:
+     * subscription was active at the END
+     * of the previous calendar month.
+     */
+    const previousMonthEnd =
+      getPreviousMonthEnd();
 
     /*
-     * courseKey ->
-     * {
-     *   previous: Set<uid>,
-     *   current: Set<uid>,
-     *   courseId,
-     *   courseName
-     * }
+     * Map:
+     *
+     * normalized course key
+     *      ↓
+     * course information
+     *      ↓
+     * Set of unique subscriber UIDs
+     *
+     * Sets ensure that multiple purchases/
+     * renewals by the same user are counted
+     * only once.
      */
     const courseMap: Record<
       string,
@@ -226,7 +289,23 @@ export async function GET(
       }
     > = {};
 
-    purchasesSnapshot.docs.forEach(
+    /*
+     * Read all paid purchases.
+     *
+     * We intentionally calculate subscription
+     * validity from startsAt/expiresAt instead
+     * of using purchasedAt.
+     */
+    const purchasesSnapshot =
+      await adminDb
+        .collection("purchases")
+        .where(
+          "status",
+          "==",
+          "paid"
+        )
+        .get();
+purchasesSnapshot.docs.forEach(
       (purchaseDoc) => {
         const purchase =
           purchaseDoc.data();
@@ -240,67 +319,106 @@ export async function GET(
           return;
         }
 
-        const purchasedAt =
-          getDateValue(
-            purchase.purchasedAt
-          );
-
-        if (!purchasedAt) {
-          return;
-        }
-
-        const {
-          year,
-          month,
-        } =
-          getIndiaYearMonth(
-            purchasedAt
-          );
-
         const courseId =
           String(
             purchase.courseId ??
               ""
           ).trim();
 
-        const key =
+        const courseKey =
           normalizeCourseKey(
             courseId ||
               purchase.courseName
           );
 
-        if (!key) {
+        if (!courseKey) {
           return;
         }
 
-        if (!courseMap[key]) {
-          courseMap[key] = {
-            courseId,
+        /*
+         * IMPORTANT:
+         *
+         * Use startsAt/expiresAt.
+         *
+         * A subscription is active at a
+         * particular point in time when:
+         *
+         * startsAt <= point
+         * AND
+         * expiresAt > point
+         */
+        const startsAt =
+          getDateValue(
+            purchase.startsAt
+          );
+
+        const expiresAt =
+          getDateValue(
+            purchase.expiresAt
+          );
+
+        if (
+          !startsAt ||
+          !expiresAt
+        ) {
+          return;
+        }
+
+        /*
+         * Ignore invalid subscription periods.
+         */
+        if (
+          expiresAt <= startsAt
+        ) {
+          return;
+        }
+
+        if (!courseMap[courseKey]) {
+          courseMap[courseKey] = {
+            courseId:
+              courseId ||
+              courseKey,
+
             courseName:
               courseDisplayName(
                 purchase
               ),
+
             previous:
               new Set<string>(),
+
             current:
               new Set<string>(),
           };
         }
 
+        /*
+         * CURRENT MONTH / CURRENT ACTIVE
+         *
+         * Active right now.
+         */
         if (
-          year === currentYear &&
-          month === currentMonth
+          startsAt <= now &&
+          expiresAt > now
         ) {
-          courseMap[key]
+          courseMap[courseKey]
             .current
             .add(uid);
         }
 
+        /*
+         * PREVIOUS MONTH
+         *
+         * Active at the end of the
+         * previous calendar month.
+         */
         if (
-          year === previousYear &&
-          month === previousMonth
+          startsAt <=
+            previousMonthEnd &&
+          expiresAt >
+            previousMonthEnd
         ) {
-          courseMap[key]
+          courseMap[courseKey]
             .previous
             .add(uid);
         }
@@ -308,8 +426,8 @@ export async function GET(
     );
 
     /*
-     * Collect all subscriber UIDs first.
-     * This avoids reading the same user repeatedly.
+     * Collect every UID which appears in
+     * either report.
      */
     const allUids =
       new Set<string>();
@@ -328,6 +446,9 @@ export async function GET(
       );
     });
 
+    /*
+     * Load user profiles.
+     */
     const userMap =
       new Map<
         string,
@@ -338,8 +459,11 @@ export async function GET(
       >();
 
     /*
-     * Firestore getAll() allows us to
-     * retrieve the user documents efficiently.
+     * Subscriber count must NEVER depend on
+     * the existence of a Firestore users document.
+     *
+     * First load whatever profile information
+     * exists in Firestore.
      */
     const userRefs =
       Array.from(allUids).map(
@@ -370,6 +494,7 @@ export async function GET(
               name:
                 getUserName(data) ||
                 "—",
+
               email:
                 String(
                   data.email ?? ""
@@ -381,6 +506,65 @@ export async function GET(
       );
     }
 
+    /*
+     * If a subscriber has no Firestore
+     * users document, obtain their identity
+     * directly from Firebase Authentication.
+     *
+     * This is used only for display.
+     *
+     * The UID already established the
+     * subscription and therefore remains
+     * counted regardless of profile availability.
+     */
+    const missingUids =
+      Array.from(allUids).filter(
+        (uid) =>
+          !userMap.has(uid)
+      );
+
+    for (const uid of missingUids) {
+      try {
+        const authUser =
+          await adminAuth.getUser(uid);
+
+        userMap.set(
+          uid,
+          {
+            name:
+              authUser.displayName ||
+              "—",
+
+            email:
+              authUser.email ||
+              "—",
+          }
+        );
+      } catch (authError) {
+        console.error(
+          "Unable to load Firebase Auth user:",
+          uid,
+          authError
+        );
+
+        /*
+         * Still keep the subscriber in
+         * the report even if identity
+         * information cannot be retrieved.
+         */
+        userMap.set(
+          uid,
+          {
+            name: "—",
+            email: "—",
+          }
+        );
+      }
+    }
+
+    /*
+     * Build final course-wise report.
+     */
     const courses =
       Object.values(
         courseMap
@@ -439,11 +623,20 @@ export async function GET(
             courseName:
               course.courseName,
 
+            /*
+             * IMPORTANT:
+             *
+             * Subscriber counts are based on the
+             * unique UID Sets, NOT on whether a
+             * corresponding users profile exists.
+             *
+             * User details are only for display.
+             */
             previousMonth:
-              previousSubscribers.length,
+              course.previous.size,
 
             currentMonth:
-              currentSubscribers.length,
+              course.current.size,
 
             previousSubscribers,
 
@@ -456,17 +649,39 @@ export async function GET(
           )
         );
 
-    return NextResponse.json({
+    const {
+      year: currentYear,
+      month: currentMonth,
+    } =
+      getIndiaYearMonth(now);
+
+    let previousYear =
+      currentYear;
+
+    let previousMonth =
+      currentMonth - 1;
+
+    if (previousMonth === 0) {
+      previousMonth = 12;
+      previousYear--;
+    }
+return NextResponse.json({
       success: true,
 
       currentMonth: {
-        year: currentYear,
-        month: currentMonth,
+        year:
+          currentYear,
+
+        month:
+          currentMonth,
       },
 
       previousMonth: {
-        year: previousYear,
-        month: previousMonth,
+        year:
+          previousYear,
+
+        month:
+          previousMonth,
       },
 
       courses,
@@ -480,12 +695,19 @@ export async function GET(
     return NextResponse.json(
       {
         success: false,
+
         error:
           error instanceof Error
             ? error.message
             : "Unable to load subscriber report.",
       },
-      { status: 500 }
+      {
+        status: 500,
+      }
     );
   }
 }
+
+
+
+
