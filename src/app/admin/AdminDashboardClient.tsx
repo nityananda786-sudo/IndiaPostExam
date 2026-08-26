@@ -257,34 +257,6 @@ export default function AdminDashboard() {
           </Link>
 
           {/* =================================================
-              COURSES
-          ================================================= */}
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-
-            <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-emerald-50 text-3xl">
-              MT
-            </div>
-
-            <h3 className="mt-5 text-xl font-extrabold text-[#123b78]">
-              Courses
-            </h3>
-
-            <p className="mt-2 text-sm leading-6 text-slate-500">
-              Manage examination courses and their content
-              assignments.
-            </p>
-
-            <div className="mt-5 text-sm font-bold text-slate-400">
-              Coming Soon
-            </div>
-
-          </div>
-
-
-          {/* =================================================
-
-          {/* =================================================
               PUBLISH & CONTROL
           ================================================= */}
 
@@ -348,5 +320,7 @@ export default function AdminDashboard() {
     </main>
   );
 }
+
+
 
 

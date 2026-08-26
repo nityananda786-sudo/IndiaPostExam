@@ -511,6 +511,17 @@ useEffect(() => {
         }
       );
 
+setQuestions((previousQuestions) =>
+  previousQuestions.map((item) =>
+    item.id === question.id
+      ? {
+          ...item,
+          status: newStatus,
+        }
+      : item
+  )
+);
+
       setMessage(
         newStatus === "published"
           ? "Question published successfully."
@@ -616,6 +627,17 @@ useEffect(() => {
           updatedAt: serverTimestamp(),
         }
       );
+
+setQuestions((previousQuestions) =>
+  previousQuestions.map((item) =>
+    item.id === question.id
+      ? {
+          ...item,
+          quizEligible: newQuizEligible,
+        }
+      : item
+  )
+);
 
       setMessage(
         newQuizEligible

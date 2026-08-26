@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 
 
@@ -567,7 +567,19 @@ try {
   const selectedPlan =
   selectedPlans[course.id] || "monthly";
 
-            return (
+const controlKeys = [
+  course.id,
+  course.title,
+  course.shortTitle,
+  course.subtitle,
+].map(normalizeCourseKey);
+
+const enrollmentOpen = controlKeys.some(
+  (key) =>
+    courseControls[key]?.enrollmentOpen === true
+);
+
+return (
               <article
                 key={course.id}
                 className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-lg"
@@ -638,6 +650,22 @@ try {
                         >
                           Renew in Advance
                         </Link>
+                      </div>
+                   ) : !enrollmentOpen ? (
+                      <div>
+                        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4 text-center">
+                          <p className="text-xs font-extrabold uppercase tracking-wide text-amber-700">
+                            NEW ENROLLMENT CLOSED
+                          </p>
+
+                          <p className="mt-1 text-sm font-semibold text-amber-800">
+                            Enrollment for this course is currently closed.
+                          </p>
+
+                          <p className="mt-1 text-xs font-medium text-amber-700">
+                            Please check again later.
+                          </p>
+                        </div>
                       </div>
                     ) : trialActive ? (
                       <div>
@@ -1247,25 +1275,3 @@ try {
     </button>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

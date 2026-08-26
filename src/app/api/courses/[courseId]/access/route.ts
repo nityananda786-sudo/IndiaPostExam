@@ -99,18 +99,40 @@ export async function GET(
     const userSnap =
       await userRef.get();
 
-    if (!userSnap.exists) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "User profile not found.",
-        },
-        { status: 404 }
-      );
-    }
+    let userData: FirebaseFirestore.DocumentData;
 
-    const userData =
-      userSnap.data() || {};
+if (!userSnap.exists) {
+  const recoveredProfile = {
+    email: decoded.email ?? null,
+    role: "aspirant",
+    subscription: "free",
+    active: true,
+    createdAt: FieldValue.serverTimestamp(),
+  };
+
+  await userRef.set(
+    recoveredProfile,
+    { merge: true }
+  );
+
+  userData = {
+    email: decoded.email ?? null,
+    role: "aspirant",
+    subscription: "free",
+    active: true,
+  };
+
+  console.log(
+    "Recovered missing user profile:",
+    {
+      uid,
+      email: decoded.email ?? null,
+    }
+  );
+} else {
+  userData =
+    userSnap.data() || {};
+}
 
     // --------------------------------------------------
     // 4. Check user active status

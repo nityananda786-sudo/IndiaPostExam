@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
+import { adminDb } from "@/lib/firebase-admin";
 import Razorpay from "razorpay";
 
 import { courses } from "@/components/featured-courses/courseData";
@@ -158,7 +159,50 @@ export async function POST(request: NextRequest) {
         { status: 404 }
       );
     }
+    // ------------------------------------------------
+    // NEW ENROLLMENT CONTROL
+    //
+    // Published controls visibility.
+    // enrollmentOpen controls whether a NEW
+    // purchase/order can be created.
+    //
+    // Existing subscribers are not affected.
+    // ------------------------------------------------
 
+    const courseControlSnapshot =
+      await adminDb
+        .collection("courses")
+        .doc(course.id)
+        .get();
+
+    if (!courseControlSnapshot.exists) {
+      return NextResponse.json(
+        {
+          error:
+            "Course enrollment settings could not be found.",
+        },
+        { status: 404 }
+      );
+    }
+
+    const courseControl =
+      courseControlSnapshot.data() || {};
+
+    const enrollmentOpen =
+      courseControl.enrollmentOpen ??
+      courseControl.EnrollmentOpen ??
+      false;
+
+    if (enrollmentOpen !== true) {
+      return NextResponse.json(
+        {
+          error:
+            "New enrollment for this course is currently closed.",
+          enrollmentOpen: false,
+        },
+        { status: 403 }
+      );
+    }
     // ------------------------------------------------
     // ONLY PREMIUM COURSES CAN BE PURCHASED
     // ------------------------------------------------
@@ -194,13 +238,13 @@ export async function POST(request: NextRequest) {
     // SERVER-SIDE PRICE CALCULATION
     //
     // Monthly:
-    // fee × 1
+    // fee Ã— 1
     //
     // 6 Months:
-    // fee × 6 × 80%
+    // fee Ã— 6 Ã— 80%
     //
     // 1 Year:
-    // fee × 12 × 70%
+    // fee Ã— 12 Ã— 70%
     //
     // Price from browser is NEVER trusted.
     // ------------------------------------------------
