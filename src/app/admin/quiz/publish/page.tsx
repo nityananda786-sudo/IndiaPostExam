@@ -15,6 +15,7 @@ type Course = {
   active?: boolean;
   Published?: boolean;
   EnrollmentOpen?: boolean;
+  fee?: number;
 };
 
 export default function PublishControlPage() {
@@ -23,12 +24,17 @@ export default function PublishControlPage() {
 
   const [published, setPublished] = useState(false);
   const [enrollmentOpen, setEnrollmentOpen] = useState(false);
+  const [fee, setFee] = useState("");
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+
+  function closeMessage() {
+    setMessage("");
+  }
 
   const selectedCourse = useMemo(
     () =>
@@ -129,8 +135,13 @@ setCourses(loadedCourses);
       selectedCourse.EnrollmentOpen ?? false
     );
 
-    setMessage("");
-    setError("");
+    setFee(
+      typeof selectedCourse.fee === "number"
+        ? String(selectedCourse.fee)
+        : ""
+    );
+
+
   }, [selectedCourse]);
 
   async function saveControls() {
@@ -171,6 +182,7 @@ setCourses(loadedCourses);
               selectedCourse.id,
             published,
             enrollmentOpen,
+            fee,
           }),
         }
       );
@@ -194,6 +206,8 @@ setCourses(loadedCourses);
                   data.published,
                 EnrollmentOpen:
                   data.enrollmentOpen,
+                fee:
+                  data.fee,
               }
             : course
         )
@@ -267,8 +281,41 @@ setCourses(loadedCourses);
         )}
 
         {message && (
-          <div className="mb-6 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 font-bold text-emerald-700">
-            ✓ {message}
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="course-save-success-title"
+          >
+            <div className="w-full max-w-md rounded-2xl border border-emerald-200 bg-white p-7 shadow-2xl">
+              <div className="text-center">
+
+                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-3xl font-black text-emerald-600">
+                  ✓
+                </div>
+
+                <h2
+                  id="course-save-success-title"
+                  className="mt-5 text-xl font-extrabold text-slate-800"
+                >
+                  Success
+                </h2>
+
+                <p className="mt-3 text-sm leading-6 text-slate-600">
+                  {message}
+                </p>
+
+                <button
+                  type="button"
+                  onClick={closeMessage}
+                  autoFocus
+                  className="mt-6 rounded-xl bg-[#123f82] px-8 py-3 text-sm font-extrabold text-white shadow-sm transition hover:bg-[#0d2f65] focus:outline-none focus:ring-2 focus:ring-blue-300 focus:ring-offset-2"
+                >
+                  OK
+                </button>
+
+              </div>
+            </div>
           </div>
         )}
 
@@ -294,11 +341,13 @@ setCourses(loadedCourses);
 
               <select
                 value={selectedCourseId}
-                onChange={(e) =>
+                onChange={(e) => {
+                  setMessage("");
+                  setError("");
                   setSelectedCourseId(
                     e.target.value
-                  )
-                }
+                  );
+                }}
                 disabled={saving}
                 className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-base font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
               >
@@ -479,6 +528,47 @@ setCourses(loadedCourses);
 
                 </div>
 
+                <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-5">
+
+                  <div>
+                    <h3 className="text-base font-extrabold text-slate-800">
+                      Course Fee
+                    </h3>
+
+                    <p className="mt-1 text-sm leading-6 text-slate-600">
+                      Set the current monthly course fee. This amount
+                      is used for new purchases and subscription
+                      plan calculations.
+                    </p>
+                  </div>
+
+                  <div className="mt-4 flex items-center gap-3">
+                    <span className="text-xl font-extrabold text-slate-700">
+                      ₹
+                    </span>
+
+                    <input
+                      type="number"
+                      min="1"
+                      max="1000000"
+                      step="1"
+                      value={fee}
+                      onChange={(e) =>
+                        setFee(e.target.value)
+                      }
+                      disabled={saving}
+                      inputMode="numeric"
+                      className="w-full max-w-xs rounded-xl border border-slate-300 bg-white px-4 py-3 text-lg font-extrabold text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100"
+                      placeholder="Enter course fee"
+                    />
+                  </div>
+
+                  <p className="mt-2 text-xs font-semibold text-slate-500">
+                    Enter the monthly base fee in Indian Rupees.
+                  </p>
+
+                </div>
+
                 <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-5">
 
                   <p className="text-sm font-extrabold text-blue-900">
@@ -547,5 +637,15 @@ setCourses(loadedCourses);
     </main>
   );
 }
+
+
+
+
+
+
+
+
+
+
 
 

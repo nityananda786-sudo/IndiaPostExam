@@ -73,6 +73,10 @@ function cleanCourseData(data: FirebaseFirestore.DocumentData, id: string) {
       data.enrollmentOpen ?? data.EnrollmentOpen,
       false
     ),
+    fee:
+      typeof data.fee === "number"
+        ? data.fee
+        : Number(data.fee ?? 0),
   };
 }
 
@@ -323,18 +327,44 @@ export async function POST(request: NextRequest) {
         false
       );
 
+      const rawFee = body.fee ?? body.Fee;
+
+      const fee =
+        typeof rawFee === "number"
+          ? rawFee
+          : Number(String(rawFee ?? "").trim());
+
+      if (
+        !Number.isFinite(fee) ||
+        fee <= 0 ||
+        fee > 1000000
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "Course fee must be a valid amount greater than ₹0.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const normalizedFee = Math.round(fee);
+
       await ref.update({
         published,
         enrollmentOpen,
+        fee: normalizedFee,
         updatedAt: new Date(),
       });
 
       return NextResponse.json({
         success: true,
-        message: "Course controls updated successfully.",
+        message: "Course controls and fee updated successfully.",
         courseId,
         published,
         enrollmentOpen,
+        fee: normalizedFee,
       });
     }
     if (action === "setpublished") {
@@ -532,6 +562,7 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
 
 
 
